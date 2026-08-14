@@ -946,7 +946,19 @@ def debug_dump_table(url, max_rows=6):
 def page_index_kr():
     subtitle("국내 지수")
     df = get_kr_indices()
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "현재가": st.column_config.NumberColumn(format="%,.2f"),
+            "전일대비": st.column_config.NumberColumn(format="%,.2f"),
+            "등락률(%)": st.column_config.NumberColumn(format="%,.2f"),
+            "거래량": st.column_config.NumberColumn(format="%,d"),
+            "52주 최고": st.column_config.NumberColumn(format="%,.2f"),
+            "52주 최저": st.column_config.NumberColumn(format="%,.2f"),
+        },
+    )
 
     c1, c2 = st.columns(2)
     for col, (label, code) in zip((c1, c2), [("코스피", "KOSPI"), ("코스닥", "KOSDAQ")]):
@@ -1014,7 +1026,15 @@ def page_index_kr():
 def page_index_us():
     subtitle("해외 지수")
     df = get_us_indices()
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "현재가": st.column_config.NumberColumn(format="%,.2f"),
+            "등락률(%)": st.column_config.NumberColumn(format="%,.2f"),
+        },
+    )
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: Yahoo Finance(yfinance)")
 
 
