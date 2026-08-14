@@ -98,11 +98,52 @@ def get_rss_news(feed_url, limit=10):
             items.append({
                 "제목": e.get("title", ""),
                 "링크": e.get("link", ""),
-                "시간": e.get("published", "")[:16]
+                "시간": e.get("published", "")[:16],
+                "출처": ""
             })
         return items
     except Exception as e:
-        return [{"제목": f"조회 실패: {e}", "링크": "", "시간": ""}]
+        return [{"제목": f"조회 실패: {e}", "링크": "", "시간": "", "출처": ""}]
+
+
+# 국내 종합경제지 RSS (다수 소스). 개별 언론사가 URL을 바꾸면 해당 피드만 빈 목록이
+# 나올 수 있어, 그 경우 알려주시면 주소를 갱신하겠습니다.
+FEEDS_DOMESTIC = {
+    "연합뉴스": "https://www.yna.co.kr/rss/economy.xml",
+    "매일경제": "https://www.mk.co.kr/rss/30000001/",
+    "한국경제": "https://www.hankyung.com/feed/economy",
+    "서울경제": "https://www.sedaily.com/RSS/S1N1.xml",
+    "이데일리": "http://rss.edaily.co.kr/edaily_news.xml",
+}
+FEEDS_GLOBAL = {
+    "Reuters": "https://feeds.reuters.com/reuters/businessNews",
+}
+
+
+@st.cache_data(ttl=300)
+def get_multi_rss(feeds: dict, limit_per_feed=5):
+    """여러 RSS를 합쳐 출처 태그를 붙여 반환"""
+    all_items = []
+    for src, url in feeds.items():
+        try:
+            feed = feedparser.parse(url)
+            for e in feed.entries[:limit_per_feed]:
+                all_items.append({
+                    "제목": e.get("title", ""),
+                    "링크": e.get("link", ""),
+                    "시간": e.get("published", "")[:16],
+                    "출처": src
+                })
+        except Exception:
+            continue
+    return all_items
+
+
+def filter_by_keywords(items, keywords):
+    """제목에 키워드가 하나라도 포함된 항목만 필터"""
+    if not keywords:
+        return items
+    return [it for it in items if any(kw in it["제목"] for kw in keywords)]
 
 
 @st.cache_data(ttl=60)
@@ -129,18 +170,91 @@ def search_stock(query):
 # 화면(중분류)별 렌더 함수
 # ─────────────────────────────────────────────
 
+def page_briefing():
+    subtitle("오늘의 브리핑 (핵심 이슈 종합)")
+    st.caption("※ 현재는 AI 서술형 요약이 아니라, 여러 소스 헤드라인 중 핵심으로 보이는 항목을 규칙 기반으로 골라 정리한 버전입니다. "
+               "AI가 문장으로 써주는 진짜 '보고서형' 브리핑은 별도 API 키 연동 후 업그레이드 예정입니다.")
+
+    kr_items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=6)
+    gl_items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=6)
+
+    important_kw = ["코스피", "코스닥", "금리", "환율", "연준", "Fed", "실적", "무역", "관세",
+                     "반도체", "수출", "인플레이션", "CPI", "FOMC", "달러", "국고채"]
+
+    kr_pick = filter_by_keywords(kr_items, important_kw)[:6]
+    gl_pick = filter_by_keywords(gl_items, important_kw)[:4]
+
+    st.markdown("**국내 시장 핵심 이슈**")
+    if kr_pick:
+        for n in kr_pick:
+            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
+    else:
+        st.caption("조건에 맞는 핵심 이슈를 찾지 못했습니다.")
+
+    st.markdown("**해외 시장 핵심 이슈**")
+    if gl_pick:
+        for n in gl_pick:
+            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
+    else:
+        st.caption("조건에 맞는 핵심 이슈를 찾지 못했습니다.")
+
+
 def page_news_domestic():
-    subtitle("국내 뉴스 (연합뉴스 경제)")
-    items = get_rss_news("https://www.yna.co.kr/rss/economy.xml")
+    subtitle("국내 뉴스 (연합뉴스·매일경제·한국경제·서울경제·이데일리)")
+    items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=5)
     for n in items:
-        st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['시간']}</span>", unsafe_allow_html=True)
+        st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
 
 
 def page_news_global():
     subtitle("해외 뉴스 (Reuters Business)")
-    items = get_rss_news("https://feeds.reuters.com/reuters/businessNews")
+    items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=10)
     for n in items:
-        st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['시간']}</span>", unsafe_allow_html=True)
+        st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
+
+
+def page_research_general():
+    subtitle("리서치 · 종합")
+    items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=6)
+    for n in items[:12]:
+        st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
+    st.caption("※ 임시로 종합경제지 헤드라인을 그대로 노출 중입니다. 증권사 리서치센터 리포트 연동은 다음 단계 협의 후 진행합니다.")
+
+
+def page_research_company():
+    subtitle("리서치 · 기업분석")
+    items = filter_by_keywords(get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=8),
+                                ["실적", "목표주가", "영업이익", "순이익", "리포트", "매수", "매도"])
+    if items:
+        for n in items[:12]:
+            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
+    else:
+        st.caption("현재 조건에 맞는 기사가 없습니다.")
+    st.caption("※ 키워드 기반 임시 필터입니다.")
+
+
+def page_research_industry():
+    subtitle("리서치 · 산업분석")
+    items = filter_by_keywords(get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=8),
+                                ["업황", "산업", "공급망", "규제", "수주", "생산"])
+    if items:
+        for n in items[:12]:
+            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
+    else:
+        st.caption("현재 조건에 맞는 기사가 없습니다.")
+    st.caption("※ 키워드 기반 임시 필터입니다.")
+
+
+def page_research_strategy():
+    subtitle("리서치 · 투자전략")
+    items = filter_by_keywords(get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=8),
+                                ["증시", "전망", "금리", "환율", "투자전략", "포트폴리오", "자산배분"])
+    if items:
+        for n in items[:12]:
+            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
+    else:
+        st.caption("현재 조건에 맞는 기사가 없습니다.")
+    st.caption("※ 키워드 기반 임시 필터입니다.")
 
 
 def page_index_kr():
@@ -206,9 +320,18 @@ def page_policy_kr():
 # 여기에 항목만 추가하면 메뉴가 늘어남
 # ─────────────────────────────────────────────
 MENU = {
-    "📰 뉴스브리핑": {
+    "🗞️ 뉴스브리핑": {
+        "오늘의 브리핑": page_briefing,
+    },
+    "📡 뉴스": {
         "국내 뉴스": page_news_domestic,
         "해외 뉴스": page_news_global,
+    },
+    "🔎 리서치": {
+        "종합": page_research_general,
+        "기업분석": page_research_company,
+        "산업분석": page_research_industry,
+        "투자전략": page_research_strategy,
     },
     "📈 실시간 시황": {
         "국내 지수": page_index_kr,
