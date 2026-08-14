@@ -188,35 +188,71 @@ def get_naver_investor_trend(sosok):
     """
     투자자별(외국인/기관/개인) 순매수 동향 (억원) — 당일/주간누계/월간누계.
     sosok: '0'=코스피, '1'=코스닥
-    ※ 네이버 페이지는 데이터가 자바스크립트로 채워져 정적 스크래핑이 불가해,
-      한국거래소(KRX) 공식 데이터를 쓰는 pykrx 라이브러리로 조회합니다.
+    ※ 네이버 페이지는 데이터가 자바스크립트로 채워져 정적 스크래핑이 불가하고,
+      pykrx 패키지는 matplotlib 등 무거운 의존성 때문에 배포 설치가 오래 걸려 제외했습니다.
+      대신 pykrx가 내부적으로 쓰는 한국거래소(KRX) 공개 API를 requests로 직접 호출합니다.
     """
-    from pykrx import stock as pykrx_stock
-    market = "KOSPI" if str(sosok) == "0" else "KOSDAQ"
+    market_id = "STK" if str(sosok) == "0" else "KSQ"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd",
+        "X-Requested-With": "XMLHttpRequest",
+    }
 
     try:
+        session = requests.Session()
+        # 쿠키 확보용 warmup 요청
+        session.get("https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd",
+                     headers=headers, timeout=6)
+
         today = datetime.now()
         fromdate = (today - pd.Timedelta(days=40)).strftime("%Y%m%d")
         todate = today.strftime("%Y%m%d")
-        df = pykrx_stock.get_market_trading_value_by_date(fromdate, todate, market, on="순매수")
-        if df is None or df.empty:
+
+        params = {
+            "bld": "dbms/MDC/STAT/standard/MDCSTAT02202",
+            "strtDd": fromdate,
+            "endDd": todate,
+            "mktId": market_id,
+            "etf": "",
+            "etn": "",
+            "els": "",
+            "trdVolVal": "2",  # 거래대금 기준
+            "askBid": "3",     # 순매수
+        }
+        resp = session.post("https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
+                             headers=headers, data=params, timeout=8)
+        data = resp.json()
+        rows_raw = data.get("output", []) or data.get("OutBlock_1", [])
+        if not rows_raw:
             return None
 
-        df = df.sort_index(ascending=False)  # 최신 날짜 먼저
-        df = (df / 100_000_000).round(0).astype(int)  # 원 → 억원
+        def parse_num(s):
+            s = str(s).replace(",", "").strip()
+            try:
+                return int(s)
+            except ValueError:
+                return 0
 
         rows = []
-        for date, row in df.iterrows():
+        for r in rows_raw:
+            date_txt = str(r.get("TRD_DD", "")).replace("/", "-")
+            if not date_txt:
+                continue
             rows.append({
-                "날짜": date.strftime("%Y-%m-%d"),
-                "개인": int(row["개인"]),
-                "외국인": int(row["외국인합계"]),
-                "기관": int(row["기관합계"]),
+                "날짜": date_txt,
+                "기관": parse_num(r.get("TRDVAL1", 0)) // 100_000_000,
+                "기타법인": parse_num(r.get("TRDVAL2", 0)) // 100_000_000,
+                "개인": parse_num(r.get("TRDVAL3", 0)) // 100_000_000,
+                "외국인": parse_num(r.get("TRDVAL4", 0)) // 100_000_000,
             })
 
         if not rows:
             return None
 
+        rows.sort(key=lambda x: x["날짜"], reverse=True)  # 최신 날짜 먼저
         latest = rows[0]
         week_rows = rows[:5]
         month_rows = rows[:20]
@@ -946,11 +982,33 @@ def page_index_kr():
 
     st.markdown("---")
     if st.checkbox("🔧 진단모드 (원본 데이터 구조 보기)", key="idx_debug"):
-        st.caption("아래 내용을 캡처해서 보내주시면 정확한 컬럼 구조로 고칠 수 있습니다.")
+        st.caption("아래 내용을 캡처(또는 복사)해서 보내주시면 정확한 구조로 고칠 수 있습니다.")
         st.markdown("**업종별시세 원본**")
         st.json(debug_dump_table("https://finance.naver.com/sise/sise_group.naver?type=upjong", max_rows=5))
-        st.markdown("**수급현황(코스피) 원본**")
-        st.json(debug_dump_table("https://finance.naver.com/sise/investorDealTrendDay.naver?sosok=0&page=1", max_rows=6))
+
+        st.markdown("**수급현황(KRX API) 원본 응답**")
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+            session = requests.Session()
+            session.get("https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd", headers=headers, timeout=6)
+            today = datetime.now()
+            params = {
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT02202",
+                "strtDd": (today - pd.Timedelta(days=5)).strftime("%Y%m%d"),
+                "endDd": today.strftime("%Y%m%d"),
+                "mktId": "STK", "etf": "", "etn": "", "els": "",
+                "trdVolVal": "2", "askBid": "3",
+            }
+            resp = session.post("https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
+                                 headers=headers, data=params, timeout=8)
+            st.code(resp.text[:2000])
+        except Exception as e:
+            st.error(f"KRX API 진단 실패: {e}")
 
 
 def page_index_us():

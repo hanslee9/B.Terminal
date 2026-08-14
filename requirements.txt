@@ -5,5 +5,3 @@ feedparser
 yfinance
 beautifulsoup4
 anthropic
-setuptools
-pykrx
