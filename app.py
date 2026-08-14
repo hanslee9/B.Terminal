@@ -55,15 +55,16 @@ def get_us_indices():
 
 @st.cache_data(ttl=60)
 def get_kr_indices():
-    """국내 주요 지수 (FinanceDataReader)"""
-    import FinanceDataReader as fdr
-    tickers = {"KS11": "KOSPI", "KQ11": "KOSDAQ"}
+    """국내 주요 지수 (yfinance)"""
+    import yfinance as yf
+    tickers = {"^KS11": "KOSPI", "^KQ11": "KOSDAQ"}
     rows = []
     for tk, name in tickers.items():
         try:
-            df = fdr.DataReader(tk).tail(2)
-            last = df["Close"].iloc[-1]
-            prev = df["Close"].iloc[-2]
+            t = yf.Ticker(tk)
+            h = t.history(period="5d")
+            last = h["Close"].iloc[-1]
+            prev = h["Close"].iloc[-2]
             chg = (last - prev) / prev * 100
             rows.append({"지수": name, "현재가": round(last, 2), "등락률(%)": round(chg, 2)})
         except Exception:
