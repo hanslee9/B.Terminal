@@ -29,6 +29,32 @@ h1,h2,h3 { color:#c05a00 !important; }
 """, unsafe_allow_html=True)
 
 
+def check_password():
+    """
+    st.secrets에 APP_PASSWORD가 설정되어 있으면 비밀번호 입력 전까지 앱 진입을 막습니다.
+    설정 안 되어 있으면 게이트 없이 그대로 통과 (기존처럼 동작).
+    """
+    app_password = st.secrets.get("APP_PASSWORD", None)
+    if not app_password:
+        return  # 비밀번호 미설정 → 제한 없음
+
+    if st.session_state.get("authenticated", False):
+        return
+
+    st.markdown("<div style='font-weight:700;font-size:18px;color:#c05a00;margin-top:60px;'>🔒 접근 제한</div>", unsafe_allow_html=True)
+    pwd = st.text_input("비밀번호를 입력하세요", type="password", key="pwd_input")
+    if st.button("확인"):
+        if pwd == app_password:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 틀렸습니다.")
+    st.stop()
+
+
+check_password()
+
+
 def subtitle(text):
     st.markdown(f"<div style='font-size:15px;font-weight:700;color:#1a1a1a;margin:6px 0;'>{text}</div>", unsafe_allow_html=True)
 
@@ -280,6 +306,7 @@ def get_naver_research(list_path, limit=15):
       항목이 비어 나오면 알려주시면 선택자를 갱신하겠습니다.
     """
     from bs4 import BeautifulSoup
+    from urllib.parse import urljoin
     url = f"https://finance.naver.com/research/{list_path}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
@@ -296,7 +323,7 @@ def get_naver_research(list_path, limit=15):
             if not title_a:
                 continue
             title = title_a.get_text(strip=True)
-            link = "https://finance.naver.com/research/" + title_a.get("href", "")
+            link = urljoin(url, title_a.get("href", ""))
             broker = tds[1].get_text(strip=True)
             date = tds[-1].get_text(strip=True)
             if title:
@@ -527,19 +554,164 @@ def render_research_list(list_path, source_label):
     st.caption(f"출처: 네이버금융 리서치 · {source_label} (증권사 애널리스트 리포트 모음)")
 
 
-def page_research_general():
-    subtitle("리서치 · 종합 (시황정보)")
-    render_research_list("market_info_list.naver", "시황정보")
+@st.cache_data(ttl=300)
+def get_company_metrics(ticker):
+    """yfinance에서 핵심 밸류에이션·수익성 지표 추출"""
+    import yfinance as yf
+    try:
+        info = yf.Ticker(ticker).info
+        if not info or (info.get("regularMarketPrice") is None and info.get("currentPrice") is None):
+            return None
+        return {
+            "종목명": info.get("longName", ticker),
+            "현재가": info.get("currentPrice", info.get("regularMarketPrice")),
+            "시가총액": info.get("marketCap"),
+            "PER": info.get("trailingPE"),
+            "Forward PER": info.get("forwardPE"),
+            "PBR": info.get("priceToBook"),
+            "배당수익률(%)": (info.get("dividendYield") * 100) if info.get("dividendYield") else None,
+            "ROE(%)": (info.get("returnOnEquity") * 100) if info.get("returnOnEquity") else None,
+            "영업이익률(%)": (info.get("operatingMargins") * 100) if info.get("operatingMargins") else None,
+            "매출성장률(%)": (info.get("revenueGrowth") * 100) if info.get("revenueGrowth") else None,
+            "52주 최고": info.get("fiftyTwoWeekHigh"),
+            "52주 최저": info.get("fiftyTwoWeekLow"),
+            "섹터": info.get("sector"),
+            "산업": info.get("industry"),
+            "요약": info.get("longBusinessSummary", "")[:500],
+        }
+    except Exception:
+        return None
 
 
 def page_research_company():
-    subtitle("리서치 · 기업분석 (종목분석)")
-    render_research_list("company_list.naver", "종목분석")
+    subtitle("리서치 · 기업분석")
+    q = st.text_input("분석할 종목명 또는 티커 입력 (예: 삼성전자, AAPL)", key="research_company_query")
+    if not q:
+        st.caption("종목을 입력하면 핵심 지표 테이블과 AI 요약을 보여드립니다.")
+        return
+
+    d = search_stock(q)
+    ticker_used = q
+    if "error" in d:
+        resolved = resolve_ticker_free(q)
+        if resolved:
+            ticker_used = resolved["ticker"]
+
+    metrics = get_company_metrics(ticker_used)
+    if not metrics:
+        st.error(f"'{q}' 종목 정보를 찾지 못했습니다.")
+        return
+
+    st.markdown(f"#### {metrics['종목명']} ({ticker_used})")
+
+    labels = ["현재가", "시가총액", "PER", "Forward PER", "PBR", "배당수익률(%)",
+              "ROE(%)", "영업이익률(%)", "매출성장률(%)", "52주 최고", "52주 최저", "섹터", "산업"]
+    rows = []
+    for label in labels:
+        val = metrics.get(label)
+        if val is None:
+            val_str = "-"
+        elif isinstance(val, float):
+            val_str = f"{val:,.2f}"
+        elif isinstance(val, int):
+            val_str = f"{val:,}"
+        else:
+            val_str = str(val)
+        rows.append({"지표": label, "값": val_str})
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    if get_anthropic_client() is not None:
+        system = (
+            "당신은 증권 애널리스트입니다. 아래 기업 지표를 바탕으로 3~4문장으로 핵심만 서술하세요. "
+            "밸류에이션 수준, 수익성, 특징을 간결하게 짚되, 매수/매도 추천은 하지 마세요. 한국어로 작성하세요."
+        )
+        context = "\n".join([f"{r['지표']}: {r['값']}" for r in rows]) + f"\n사업개요: {metrics.get('요약', '')}"
+        summary, err = ask_ai(context, system_prompt=system, use_web_search=False, max_tokens=400)
+        if summary:
+            st.markdown("**AI 요약**")
+            st.markdown(summary)
+    else:
+        st.caption("AI 서술 요약을 쓰려면 API 키가 필요합니다 (지표 테이블은 키 없이 무료로 제공됩니다).")
+
+    st.markdown("---")
+    if ticker_used.upper().endswith((".KS", ".KQ")):
+        code = ticker_used.split(".")[0]
+        st.markdown(
+            f"[네이버금융에서 {metrics['종목명']} 관련 증권사 리포트 더 보기]"
+            f"(https://finance.naver.com/research/company_list.naver?searchType=itemCode&itemCode={code})"
+        )
+    else:
+        st.markdown(f"[Seeking Alpha에서 {ticker_used} 관련 애널리스트 리포트 더 보기](https://seekingalpha.com/symbol/{ticker_used})")
+
+
+@st.cache_data(ttl=1800)
+def generate_research_report(context_text):
+    """리서치·종합용 — 브리핑보다 긴 서술형 정식 리포트 (API 키 필요)"""
+    system = (
+        "당신은 증권사 리서치센터가 발행하는 '데일리 시황 리포트'를 작성하는 애널리스트입니다. "
+        "아래 헤드라인을 참고해 다음 구조로 마크다운 '## 소제목'을 사용한 정식 리포트를 쓰세요:\n"
+        "## 국내 증시 동향\n## 해외 증시 동향\n## 환율·금리·원자재\n## 산업/기업 이슈\n## 투자 시사점\n\n"
+        "브리핑처럼 짧은 글머리표가 아니라, 실제 증권사 리포트처럼 각 섹션을 원인-현황-전망을 갖춘 "
+        "3~5문장의 완결된 문단으로 서술하세요. 확인되지 않은 내용은 추측하지 말고 헤드라인 사실 위주로 "
+        "작성하세요. 한국어로 작성하세요."
+    )
+    prompt = f"오늘의 헤드라인 목록:\n{context_text}\n\n위 내용을 바탕으로 데일리 리서치 리포트를 작성해줘."
+    return ask_ai(prompt, system_prompt=system, want_json=False, max_tokens=1800)
+
+
+def page_research_general():
+    subtitle("리서치 · 종합")
+    kr_items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=6)
+    gl_items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=6)
+    context = "\n".join([f"- [{it['출처']}] {it['제목']}" for it in kr_items + gl_items])
+
+    text, err = generate_research_report(context)
+    if text:
+        st.markdown(text)
+        st.caption(f"AI 생성 리서치 리포트 · {datetime.now().strftime('%Y-%m-%d %H:%M')} 기준 헤드라인 참고 · "
+                   "참고용, 투자판단 근거로 단독 사용 금지")
+    else:
+        st.info("AI 리포트를 쓰려면 Anthropic API 키가 필요합니다. 대신 증권사 시황정보 리포트 원문 목록을 보여드립니다.")
+        render_research_list("market_info_list.naver", "시황정보")
 
 
 def page_research_industry():
-    subtitle("리서치 · 산업분석")
-    render_research_list("industry_list.naver", "산업분석")
+    subtitle("리서치 · 산업분석 (경기순환 관점)")
+
+    st.markdown("**경기순환 4국면과 유리한 섹터**")
+    cycle_df = pd.DataFrame([
+        {"국면": "회복기 (저점→확장)", "특징": "금리 인하 마무리, 경기 바닥 확인", "유리한 섹터": "금융, 경기소비재, IT"},
+        {"국면": "확장기", "특징": "성장률 상승, 기업이익 개선", "유리한 섹터": "산업재, 소재, 에너지"},
+        {"국면": "후퇴기 (정점→수축)", "특징": "금리 인상, 성장 둔화 시작", "유리한 섹터": "필수소비재, 헬스케어"},
+        {"국면": "침체기", "특징": "경기 저점 형성, 방어적 국면", "유리한 섹터": "유틸리티, 국채, 배당주"},
+    ])
+    st.dataframe(cycle_df, use_container_width=True, hide_index=True)
+    st.caption("※ 일반적인 경기순환-섹터 로테이션 이론에 기반한 참고표이며, 실제 국면 판단과는 별개입니다.")
+
+    st.markdown("---")
+    st.markdown("**현재 경기 국면 — AI 판단**")
+    if get_anthropic_client() is not None:
+        system = (
+            "당신은 거시경제 애널리스트입니다. 웹검색으로 최신 경제지표(고용, 물가, 금리, PMI 등) 뉴스를 확인해서, "
+            "현재 한국과 미국이 경기순환상 어느 국면(회복기/확장기/후퇴기/침체기)에 가까운지 각각 2~3문장으로 "
+            "근거와 함께 제시하세요. 확정적 예측이 아닌 참고 의견임을 전제로 하세요. 한국어로 작성하세요."
+        )
+        text, err = ask_ai("현재 한국과 미국의 경기 국면을 판단해줘.", system_prompt=system, max_tokens=600)
+        if text:
+            st.markdown(text)
+            st.caption("AI 웹서치 기반 참고 의견 · 공식 지표가 아님")
+        else:
+            st.caption(f"조회 실패: {err}")
+    else:
+        st.caption("AI 판단을 쓰려면 Anthropic API 키가 필요합니다.")
+
+    st.markdown("---")
+    st.markdown("**공식 경기선행지수 원자료**")
+    render_link_table([
+        ("통계청 - 경기종합지수 (KOSIS)", "https://kosis.kr/statHtml/statHtml.do?orgId=101&tblId=DT_1C8015", "월간·무료"),
+        ("OECD - Composite Leading Indicator", "https://www.oecd.org/en/data/indicators/composite-leading-indicator-cli.html", "월간·무료"),
+        ("Conference Board - US LEI", "https://www.conference-board.org/topics/us-leading-indicators", "월간·무료"),
+    ])
 
 
 def page_research_strategy():
