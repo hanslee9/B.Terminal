@@ -47,6 +47,24 @@ def render_link_table(rows):
     st.markdown(html, unsafe_allow_html=True)
 
 
+def render_category_lists(categories: dict):
+    """categories: {카테고리명: [(기관명, url), ...]} — 표 대신 구분선 없는 섹션별 리스트.
+    항목 추가/삭제가 쉽도록 각 카테고리 아래 단순 나열."""
+    cols = st.columns(len(categories))
+    for col, (cat_name, items) in zip(cols, categories.items()):
+        with col:
+            st.markdown(f"<div style='font-weight:700;font-size:13px;color:#c05a00;margin-bottom:6px;'>{cat_name}</div>", unsafe_allow_html=True)
+            if not items:
+                st.markdown("<div style='color:#bbb;font-size:12px;'>(추가 예정)</div>", unsafe_allow_html=True)
+            for name, url in items:
+                st.markdown(
+                    f"<div style='padding:3px 0;font-size:12.5px;'>"
+                    f"<a href='{url}' target='_blank' style='color:#1155cc;text-decoration:none;'>{name}</a>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+
 # ─────────────────────────────────────────────
 # 데이터 조회 함수들 (캐시로 API 호출 최소화)
 # ─────────────────────────────────────────────
@@ -318,35 +336,36 @@ def page_briefing():
 
     st.markdown("---")
     st.caption("모두 문서(텍스트/PDF) 형태로 발행하는 곳만 정리했습니다. 유튜브 등 영상 위주 채널은 제외했습니다. "
-               "매일 갱신되는 목록 페이지라 클릭하면 오늘자 최신 글이 맨 위에 있습니다.")
+               "기관명을 클릭하면 해당 페이지로 바로 이동합니다.")
 
-    st.markdown("**① 증권사**")
-    render_link_table([
-        ("삼성증권 — 오늘의 투자정보 (매일 아침·저녁 시황)", "https://www.samsungpop.com/v2/today-invest", "대형사"),
-        ("미래에셋증권 — 리서치 리포트 전체", "https://securities.miraeasset.com/bbs/board/message/list.do?categoryId=1521", "대형사"),
-        ("한국투자증권 — 리서치 센터", "https://securities.koreainvestment.com/main/research/research/Search.jsp", "대형사"),
-        ("키움증권 — 경제/전략 (모닝레터·일간증시전망)", "https://www.kiwoom.com/h/invest/research/VMarketSEView", "대형사"),
-        ("KB증권 — 리서치본부", "https://rc.kbsec.com/main.able", "대형사"),
-    ])
-
-    st.markdown("**② 공공·정책기관**")
-    render_link_table([
-        ("한국은행 — 일일 금융외환시장 동향", "https://www.bok.or.kr/portal/bbs/B0000348/list.do?menuNo=201109", "매일·완전무료"),
-        ("국제금융센터(KCIF) — 국제금융속보", "https://www.kcif.or.kr/annual/newsflashList", "매일 아침·일부유료"),
-        ("국제금융센터(KCIF) — 이슈브리핑", "https://www.kcif.or.kr/brief/briefList", "비정기·일부유료"),
-        ("자본시장연구원(KCMI) — 자본시장포커스", "https://www.kcmi.re.kr/publications", "약 2주 1회·무료"),
-    ])
-
-    st.markdown("**③ 기타 민영 (그룹 계열 경제연구소)**")
-    render_link_table([
-        ("하나금융연구소", "https://www.hanaif.re.kr/", "비정기·무료"),
-        ("KB경영연구소", "https://www.kbfg.com/kbresearch/report/reportList.do", "비정기·무료"),
-        ("LG경영연구원", "https://www.lgbr.co.kr/business/list.do", "비정기·무료"),
-        ("우리금융경영연구소", "https://www.wfri.re.kr/", "비정기·무료"),
-    ])
+    render_category_lists({
+        "증권사": [
+            ("삼성증권", "https://www.samsungpop.com/v2/today-invest"),
+            ("미래에셋증권", "https://securities.miraeasset.com/bbs/board/message/list.do?categoryId=1521"),
+            ("한국투자증권", "https://securities.koreainvestment.com/main/research/research/Search.jsp"),
+            ("DS투자증권", "https://www.ds-sec.co.kr/bbs/board.php?bo_table=sub03_03"),
+            ("유안타증권", "https://www.myasset.com/myasset/research/RS_0000000_M.cmd"),
+        ],
+        "공공 정책기관": [
+            ("한국은행 - 일일 금융시장 동향", "https://www.bok.or.kr/portal/bbs/B0000348/list.do?menuNo=201109"),
+            ("국제금융센터 (KCIF)", "https://www.kcif.or.kr/annual/newsflashList"),
+            ("자본시장연구원 (KCMI)", "https://www.kcmi.re.kr/publications"),
+        ],
+        "기타, 민영 기업/연구소": [
+            ("하나금융연구소", "https://www.hanaif.re.kr/"),
+            ("KB경영연구소", "https://www.kbfg.com/kbresearch/report/reportList.do"),
+            ("LG경영연구원", "https://www.lgbr.co.kr/business/list.do"),
+            ("우리금융경영연구소", "https://www.wfri.re.kr/"),
+        ],
+        "포털": [
+            ("네이버 금융", "https://finance.naver.com/research/"),
+            ("야후파이낸스", "https://finance.yahoo.com"),
+        ],
+        "기타": [],
+    })
 
     st.markdown("---")
-    st.markdown("**중소형 증권사 모닝브리프 (원문, 네이버금융 경유)**")
+    st.markdown("**중소형 증권사 모닝브리프 (원문, 네이버금융 경유 · 실시간 목록)**")
     st.caption("증권사 리서치센터가 매일 문장으로 작성하는 실제 시황 브리핑입니다. AI 요약이 아닌 원문입니다.")
     brief_items = get_naver_research("market_info_list.naver", limit=5)
     if brief_items and "조회 실패" not in brief_items[0]["제목"]:
@@ -480,47 +499,43 @@ def page_policy_kr():
     st.markdown("[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755)")
 
 
-def page_ai_chat():
-    subtitle("AI 대화")
+def render_ai_chat_panel():
+    """화면 우측에 항상 떠 있는 AI 대화 패널 (다른 메뉴를 보면서 동시에 사용 가능)"""
+    st.markdown("<div style='font-weight:700;font-size:14px;color:#c05a00;margin-bottom:6px;'>🤖 AI 대화</div>", unsafe_allow_html=True)
 
     if get_anthropic_client() is None:
-        st.warning(
-            "AI 대화를 쓰려면 Anthropic API 키가 필요합니다. "
-            "Streamlit Cloud → Manage app → Settings → Secrets 에 추가해주세요:\n\n"
+        st.info(
+            "AI 대화를 쓰려면 Anthropic API 키가 필요합니다.\n\n"
+            "Streamlit Cloud → Manage app → Settings → Secrets 에 추가:\n\n"
             "`ANTHROPIC_API_KEY = \"sk-ant-...\"`"
         )
-        st.caption("예시 질문: 'SK하이닉스 티커가 뭐야?', '오늘 미국 국채금리 왜 올랐어?', '반도체 업황 전망 알려줘'")
+        st.caption("예: 'SK하이닉스 티커가 뭐야?'")
         return
 
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    for role, msg in st.session_state.chat_history:
-        with st.chat_message(role):
-            st.markdown(msg)
+    chat_box = st.container(height=420)
+    with chat_box:
+        for role, msg in st.session_state.chat_history:
+            with st.chat_message(role):
+                st.markdown(msg)
 
-    q = st.chat_input("무엇이든 물어보세요 (예: SK하이닉스 티커가 뭐야?)")
+    q = st.chat_input("무엇이든 물어보세요", key="ai_panel_input")
     if q:
         st.session_state.chat_history.append(("user", q))
-        with st.chat_message("user"):
-            st.markdown(q)
-        with st.chat_message("assistant"):
-            with st.spinner("답변 작성 중..."):
-                system = (
-                    "당신은 이 투자정보 터미널 앱의 AI 비서입니다. 필요시 웹검색을 사용해 최신 정보로 "
-                    "간결하고 정확하게 한국어로 답하세요. 종목명을 물으면 정확한 티커(Yahoo Finance 기준, "
-                    "한국 종목은 .KS/.KQ 접미사)도 함께 알려주세요. 투자 조언이 아닌 정보 제공 목적임을 "
-                    "인지하고, 확정적인 매수/매도 추천은 하지 마세요."
-                )
-                answer, err = ask_ai(q, system_prompt=system, max_tokens=1000)
-                if answer:
-                    st.markdown(answer)
-                    st.session_state.chat_history.append(("assistant", answer))
-                else:
-                    st.error(f"오류: {err}")
+        system = (
+            "당신은 이 투자정보 터미널 앱의 AI 비서입니다. 필요시 웹검색을 사용해 최신 정보로 "
+            "간결하고 정확하게 한국어로 답하세요. 종목명을 물으면 정확한 티커(Yahoo Finance 기준, "
+            "한국 종목은 .KS/.KQ 접미사)도 함께 알려주세요. 투자 조언이 아닌 정보 제공 목적임을 "
+            "인지하고, 확정적인 매수/매도 추천은 하지 마세요. 답변은 패널이 좁으니 간결하게 작성하세요."
+        )
+        answer, err = ask_ai(q, system_prompt=system, max_tokens=800)
+        st.session_state.chat_history.append(("assistant", answer if answer else f"오류: {err}"))
+        st.rerun()
 
     if st.session_state.chat_history:
-        if st.button("대화 초기화"):
+        if st.button("대화 초기화", key="ai_panel_reset"):
             st.session_state.chat_history = []
             st.rerun()
 
@@ -553,9 +568,6 @@ MENU = {
         "미국": page_policy_us,
         "한국": page_policy_kr,
     },
-    "🤖 AI 대화": {
-        "AI 대화": page_ai_chat,
-    },
 }
 
 # ─────────────────────────────────────────────
@@ -576,6 +588,23 @@ for major, minors in MENU.items():
                 st.session_state.page = (major, minor)
                 st.rerun()
 
-major, minor = st.session_state.page
-st.markdown(f"<div class='page-title'>{major} · {minor}</div>", unsafe_allow_html=True)
-MENU[major][minor]()
+st.sidebar.markdown("---")
+chat_pct = st.sidebar.slider("AI 대화창 폭 (%)", min_value=15, max_value=45, value=25, step=5)
+
+# ─────────────────────────────────────────────
+# 본문: 좌측(선택 메뉴) + 우측(AI 대화 상시 패널, 폭 조절 가능)
+# ─────────────────────────────────────────────
+col_main, col_chat = st.columns([100 - chat_pct, chat_pct])
+
+with col_main:
+    major, minor = st.session_state.page
+    st.markdown(f"<div class='page-title'>{major} · {minor}</div>", unsafe_allow_html=True)
+    MENU[major][minor]()
+
+with col_chat:
+    st.markdown(
+        "<div style='border-left:1px solid #e0e0e0;padding-left:14px;'>",
+        unsafe_allow_html=True
+    )
+    render_ai_chat_panel()
+    st.markdown("</div>", unsafe_allow_html=True)
