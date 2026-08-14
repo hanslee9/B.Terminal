@@ -178,6 +178,22 @@ def filter_by_keywords(items, keywords):
     return [it for it in items if any(kw in it["제목"] for kw in keywords)]
 
 
+# 경제/금융/투자 관련 키워드 — 국내 뉴스에서 정치·사회 기사 걸러내는 용도
+ECON_KEYWORDS = [
+    "코스피", "코스닥", "증시", "주가", "주식", "채권", "금리", "환율", "달러", "원화", "엔화",
+    "경제", "금융", "투자", "펀드", "부동산", "물가", "인플레이션", "GDP", "실적", "매출",
+    "영업이익", "순이익", "기업", "산업", "수출", "수입", "무역", "관세", "연준", "Fed", "FOMC",
+    "한국은행", "예산", "세금", "증권", "IPO", "상장", "인수합병", "M&A", "반도체", "배터리",
+    "원자재", "유가", "스타트업", "벤처", "암호화폐", "비트코인", "은행", "보험", "카드", "대출",
+    "자산", "배당", "공모주", "상장폐지", "실업률", "고용", "소비자물가", "CPI", "무역수지",
+    "경상수지", "국채", "회사채", "리츠", "ETF", "펀드매니저", "애널리스트", "리포트", "전망"
+]
+
+
+def filter_econ_relevant(items):
+    return filter_by_keywords(items, ECON_KEYWORDS)
+
+
 @st.cache_data(ttl=600)
 def get_naver_research(list_path, limit=15):
     """
@@ -383,7 +399,12 @@ def page_briefing():
 
 def page_news_domestic():
     subtitle("국내 최신 뉴스 (연합뉴스·매일경제·한국경제·서울경제·이데일리)")
-    items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=5)
+    only_econ = st.checkbox("경제·금융·투자 관련만 보기", value=True, key="news_domestic_filter")
+    items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=10 if only_econ else 5)
+    if only_econ:
+        items = filter_econ_relevant(items)
+    if not items:
+        st.caption("조건에 맞는 기사가 없습니다.")
     for n in items:
         st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
 
