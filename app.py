@@ -18,16 +18,19 @@ st.set_page_config(page_title="TERMINAL", layout="wide", page_icon="📊")
 
 st.markdown("""
 <style>
-.stApp { background-color:#000000; color:#e8e8e8; font-family:'IBM Plex Mono',monospace; }
-section[data-testid="stSidebar"] { background-color:#0a0a0a; border-right:1px solid #242424; }
-h1,h2,h3 { color:#ff9f1c !important; }
-.stDataFrame { background-color:#0a0a0a; }
-div[data-baseweb="tab-list"] { background-color:#0a0a0a; }
-.up { color:#5fd75f; }
-.down { color:#ff5c5c; }
-.src-note { color:#6b6b6b; font-size:11px; margin-top:8px; }
+.stApp { background-color:#ffffff; color:#1a1a1a; }
+section[data-testid="stSidebar"] { background-color:#f7f7f7; border-right:1px solid #e0e0e0; }
+h1,h2,h3 { color:#c05a00 !important; }
+.up { color:#1a7a1a; }
+.down { color:#c22; }
+.src-note { color:#888; font-size:11px; margin-top:8px; }
+.page-title { font-size:20px; font-weight:700; color:#c05a00; margin-bottom:4px; }
 </style>
 """, unsafe_allow_html=True)
+
+
+def subtitle(text):
+    st.markdown(f"<div style='font-size:15px;font-weight:700;color:#1a1a1a;margin:6px 0;'>{text}</div>", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────
@@ -127,42 +130,42 @@ def search_stock(query):
 # ─────────────────────────────────────────────
 
 def page_news_domestic():
-    st.subheader("국내 뉴스 (연합뉴스 경제)")
+    subtitle("국내 뉴스 (연합뉴스 경제)")
     items = get_rss_news("https://www.yna.co.kr/rss/economy.xml")
     for n in items:
         st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['시간']}</span>", unsafe_allow_html=True)
 
 
 def page_news_global():
-    st.subheader("해외 뉴스 (Reuters Business)")
+    subtitle("해외 뉴스 (Reuters Business)")
     items = get_rss_news("https://feeds.reuters.com/reuters/businessNews")
     for n in items:
         st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['시간']}</span>", unsafe_allow_html=True)
 
 
 def page_index_kr():
-    st.subheader("국내 지수")
+    subtitle("국내 지수")
     df = get_kr_indices()
     st.dataframe(df, use_container_width=True, hide_index=True)
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: FinanceDataReader")
 
 
 def page_index_us():
-    st.subheader("해외 지수")
+    subtitle("해외 지수")
     df = get_us_indices()
     st.dataframe(df, use_container_width=True, hide_index=True)
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: Yahoo Finance(yfinance)")
 
 
 def page_fx():
-    st.subheader("환율")
+    subtitle("환율")
     df = get_fx()
     st.dataframe(df, use_container_width=True, hide_index=True)
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: frankfurter.app (ECB 기준)")
 
 
 def page_stock_search():
-    st.subheader("개별 종목 조회")
+    subtitle("개별 종목 조회")
     q = st.text_input("티커 입력 (예: AAPL, TSLA, 005930.KS)", "")
     if q:
         d = search_stock(q)
@@ -183,7 +186,7 @@ def page_stock_search():
 
 
 def page_policy_us():
-    st.subheader("미국 정책/일정 (수동 업데이트 중 — 추후 자동화 예정)")
+    subtitle("미국 정책/일정 (수동 업데이트 중 — 추후 자동화 예정)")
     st.info("FOMC 등 일정은 현재 수동 목록입니다. 다음 단계에서 Fed 공식 캘린더 연동으로 자동화 가능합니다.")
     sample = pd.DataFrame([
         {"일정": "FOMC 회의", "날짜": "다음 회의 일정 확인 필요", "비고": "federalreserve.gov 캘린더 참고"},
@@ -193,7 +196,7 @@ def page_policy_us():
 
 
 def page_policy_kr():
-    st.subheader("한국 정책/일정 (수동 업데이트 중 — 추후 자동화 예정)")
+    subtitle("한국 정책/일정 (수동 업데이트 중 — 추후 자동화 예정)")
     st.info("금통위 등 일정은 현재 수동 목록입니다. 다음 단계에서 한국은행 공식 캘린더 연동으로 자동화 가능합니다.")
     st.markdown("[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755)")
 
@@ -226,5 +229,5 @@ st.sidebar.title("📊 TERMINAL")
 major = st.sidebar.radio("대분류", list(MENU.keys()))
 minor = st.sidebar.radio("중분류", list(MENU[major].keys()))
 
-st.title(f"{major} · {minor}")
+st.markdown(f"<div class='page-title'>{major} · {minor}</div>", unsafe_allow_html=True)
 MENU[major][minor]()
