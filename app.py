@@ -116,7 +116,7 @@ def get_us_indices():
 
 @st.cache_data(ttl=60)
 def get_kr_indices():
-    """국내 주요 지수 (yfinance)"""
+    """국내 주요 지수 (yfinance) — 시가/고가/저가/거래량까지 확장"""
     import yfinance as yf
     tickers = {"^KS11": "KOSPI", "^KQ11": "KOSDAQ"}
     rows = []
@@ -124,13 +124,88 @@ def get_kr_indices():
         try:
             t = yf.Ticker(tk)
             h = t.history(period="5d")
-            last = h["Close"].iloc[-1]
-            prev = h["Close"].iloc[-2]
-            chg = (last - prev) / prev * 100
-            rows.append({"지수": name, "현재가": round(last, 2), "등락률(%)": round(chg, 2)})
+            last_row = h.iloc[-1]
+            prev_close = h["Close"].iloc[-2]
+            chg = (last_row["Close"] - prev_close) / prev_close * 100
+            rows.append({
+                "지수": name,
+                "현재가": round(last_row["Close"], 2),
+                "전일대비": round(last_row["Close"] - prev_close, 2),
+                "등락률(%)": round(chg, 2),
+                "시가": round(last_row["Open"], 2),
+                "고가": round(last_row["High"], 2),
+                "저가": round(last_row["Low"], 2),
+                "거래량": int(last_row["Volume"]) if last_row["Volume"] else None,
+            })
         except Exception:
-            rows.append({"지수": name, "현재가": None, "등락률(%)": None})
+            rows.append({"지수": name, "현재가": None, "전일대비": None, "등락률(%)": None,
+                          "시가": None, "고가": None, "저가": None, "거래량": None})
     return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=300)
+def get_naver_investor_trend(sosok):
+    """
+    투자자별(외국인/기관/개인) 당일 순매수 동향 (억원 단위).
+    sosok: '0'=코스피, '1'=코스닥
+    ※ 네이버 페이지 구조 미검증 — 값이 안 나오면 알려주시면 선택자 수정하겠습니다.
+    """
+    from bs4 import BeautifulSoup
+    today = datetime.now().strftime("%Y%m%d")
+    url = f"https://finance.naver.com/sise/investorDealTrendDay.naver?bizdate={today}&sosok={sosok}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    try:
+        r = requests.get(url, headers=headers, timeout=6)
+        r.encoding = "euc-kr"
+        soup = BeautifulSoup(r.text, "html.parser")
+        table = soup.select_one("table.type_1")
+        if not table:
+            return None
+        data_rows = [tr for tr in table.select("tr") if tr.find_all("td")]
+        if not data_rows:
+            return None
+        cells = [td.get_text(strip=True).replace(",", "") for td in data_rows[0].find_all("td")]
+        # 예상 컬럼 순서: 날짜, 개인, 외국인, 기관계 (순매수, 억원)
+        if len(cells) >= 4:
+            return {"날짜": cells[0], "개인": cells[1], "외국인": cells[2], "기관": cells[3]}
+        return None
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=300)
+def get_naver_sector_list(limit=15):
+    """
+    업종별(섹터) 등락률 상위 목록.
+    ※ 네이버 페이지 구조 미검증 — 값이 안 나오면 알려주시면 선택자 수정하겠습니다.
+    """
+    from bs4 import BeautifulSoup
+    url = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    try:
+        r = requests.get(url, headers=headers, timeout=6)
+        r.encoding = "euc-kr"
+        soup = BeautifulSoup(r.text, "html.parser")
+        table = soup.select_one("table.type_1")
+        if not table:
+            return []
+        rows = []
+        for tr in table.select("tr"):
+            tds = tr.find_all("td")
+            if len(tds) < 4:
+                continue
+            name_a = tr.find("a")
+            if not name_a:
+                continue
+            name = name_a.get_text(strip=True)
+            chg_text = tds[2].get_text(strip=True) if len(tds) > 2 else ""
+            vol_text = tds[3].get_text(strip=True) if len(tds) > 3 else ""
+            rows.append({"업종": name, "등락률": chg_text, "거래량": vol_text})
+            if len(rows) >= limit:
+                break
+        return rows
+    except Exception:
+        return []
 
 
 @st.cache_data(ttl=300)
@@ -723,7 +798,31 @@ def page_index_kr():
     subtitle("국내 지수")
     df = get_kr_indices()
     st.dataframe(df, use_container_width=True, hide_index=True)
-    st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: FinanceDataReader")
+    st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: Yahoo Finance(yfinance)")
+
+    st.markdown("---")
+    st.markdown("**수급현황 (당일 투자자별 순매수, 억원)**")
+    c1, c2 = st.columns(2)
+    for col, (label, sosok) in zip((c1, c2), [("코스피", "0"), ("코스닥", "1")]):
+        with col:
+            trend = get_naver_investor_trend(sosok)
+            if trend:
+                st.markdown(
+                    f"**{label}** ({trend['날짜']})  \n"
+                    f"개인: {trend['개인']} · 외국인: {trend['외국인']} · 기관: {trend['기관']}"
+                )
+            else:
+                st.caption(f"{label} 수급현황을 불러오지 못했습니다.")
+    st.caption("출처: 네이버금융 · 단위 억원, 음수는 순매도")
+
+    st.markdown("---")
+    st.markdown("**업종별 시세 (등락률 상위)**")
+    sectors = get_naver_sector_list(limit=15)
+    if sectors:
+        st.dataframe(pd.DataFrame(sectors), use_container_width=True, hide_index=True)
+    else:
+        st.caption("업종별 시세를 불러오지 못했습니다.")
+    st.caption("출처: 네이버금융 업종별시세")
 
 
 def page_index_us():
