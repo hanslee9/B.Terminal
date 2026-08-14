@@ -985,7 +985,7 @@ def page_index_kr():
         st.markdown("**업종별시세 원본**")
         st.json(debug_dump_table("https://finance.naver.com/sise/sise_group.naver?type=upjong", max_rows=5))
 
-        st.markdown("**수급현황(stock.naver.com API) 원본 응답**")
+        st.markdown("**수급현황(stock.naver.com API) 원본 응답 — 하루치 전체**")
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -998,11 +998,16 @@ def page_index_kr():
                 "marketType": "KOSPI",
                 "bizdate": today.strftime("%Y%m%d"),
                 "startIdx": 0,
-                "pageSize": 3,
+                "pageSize": 1,
             }
             resp = requests.get("https://stock.naver.com/api/domestic/market/trend/daily",
                                  headers=headers, params=params, timeout=8)
-            st.code(f"status_code: {resp.status_code}\n\n{resp.text[:2500]}")
+            import json as _json
+            try:
+                pretty = _json.dumps(resp.json(), ensure_ascii=False, indent=2)
+            except Exception:
+                pretty = resp.text
+            st.code(f"status_code: {resp.status_code}\n\n{pretty}")
         except Exception as e:
             st.error(f"진단 실패: {e}")
 
