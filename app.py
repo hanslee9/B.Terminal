@@ -223,6 +223,54 @@ def ai_filter_econ_relevant(items_tuple):
 
 
 @st.cache_data(ttl=600)
+def ai_rank_news(items_tuple):
+    """AI로 시장 영향력(중요도) 순으로 재정렬. 실패 시 원본 순서 유지.
+    items_tuple: ((제목, 링크, 시간, 출처), ...) 형태 — 캐시 위해 튜플로 받음"""
+    items = [{"제목": t, "링크": l, "시간": tm, "출처": s} for (t, l, tm, s) in items_tuple]
+    if not items:
+        return items
+    numbered = "\n".join([f"{i}: {it['제목']}" for i, it in enumerate(items)])
+    system = (
+        "당신은 시황 데스크 편집자입니다. 아래 번호가 매겨진 기사 제목 목록을, 오늘 시장·투자자에게 미치는 "
+        "영향력이 큰 순서대로(가장 중요한 것부터) 재정렬하세요. 전 종목/지수 등 광범위한 영향을 주는 기사, "
+        "주요 정책·금리·환율 변화, 대기업 총수 발언·대규모 투자 결정을 우선시하고, 단신·사소한 기사는 뒤로 "
+        "보내세요. 모든 번호를 빠짐없이 포함해 오직 JSON으로만 답하세요. 형식: {\"ranked\": [3,0,7,...]}"
+    )
+    data, err = ask_ai(numbered, system_prompt=system, want_json=True, use_web_search=False, max_tokens=600)
+    if data and "ranked" in data:
+        order = [i for i in data["ranked"] if isinstance(i, int) and 0 <= i < len(items)]
+        seen = set(order)
+        order += [i for i in range(len(items)) if i not in seen]
+        return [items[i] for i in order]
+    return items  # 실패 시 원본 순서 그대로
+
+
+def render_news_collapsible(items, key_prefix, top_n=10):
+    """상위 top_n개만 바로 노출, 나머지는 접어서 표시. API 키가 있으면 AI 중요도 정렬 옵션 제공."""
+    if get_anthropic_client() is not None and items:
+        use_ai_rank = st.checkbox("AI로 중요도 순 정렬", value=False, key=f"{key_prefix}_ai_rank")
+        if use_ai_rank:
+            items_tuple = tuple((it["제목"], it["링크"], it["시간"], it["출처"]) for it in items)
+            items = ai_rank_news(items_tuple)
+
+    if not items:
+        st.caption("조건에 맞는 기사가 없습니다.")
+        return
+
+    def render_item(n):
+        st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
+
+    for n in items[:top_n]:
+        render_item(n)
+
+    rest = items[top_n:]
+    if rest:
+        with st.expander(f"그 외 {len(rest)}건 더보기"):
+            for n in rest:
+                render_item(n)
+
+
+@st.cache_data(ttl=600)
 def get_naver_research(list_path, limit=15):
     """
     네이버금융 '리서치' 코너 (증권사 애널리스트 리포트 모음) 스크래핑.
@@ -434,42 +482,36 @@ def page_news_domestic():
     with c1:
         only_econ = st.checkbox("경제·금융·투자 관련만 보기", value=True, key="news_domestic_filter")
     with c2:
-        use_ai = False
+        use_ai_filter = False
         if only_econ and get_anthropic_client() is not None:
-            use_ai = st.checkbox("AI로 정밀 판단 (더 정확, 소액 과금)", value=False, key="news_domestic_ai_filter")
+            use_ai_filter = st.checkbox("AI로 관련성 정밀 판단", value=False, key="news_domestic_ai_filter")
 
     items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=10 if only_econ else 5)
 
     if only_econ:
-        if use_ai:
+        if use_ai_filter:
             items_tuple = tuple((it["제목"], it["링크"], it["시간"], it["출처"]) for it in items)
             items = ai_filter_econ_relevant(items_tuple)
         else:
             items = filter_econ_relevant(items)
 
-    if not items:
-        st.caption("조건에 맞는 기사가 없습니다.")
-    for n in items:
-        st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
+    render_news_collapsible(items, key_prefix="news_domestic", top_n=10)
 
 
 def page_news_global():
     subtitle("해외 최신 뉴스 (Reuters·CNBC·MarketWatch·Yahoo Finance)")
 
-    use_ai = False
+    use_ai_filter = False
     if get_anthropic_client() is not None:
-        use_ai = st.checkbox("AI로 경제·금융 관련성 정밀 판단 (소액 과금)", value=False, key="news_global_ai_filter")
+        use_ai_filter = st.checkbox("AI로 경제·금융 관련성 정밀 판단", value=False, key="news_global_ai_filter")
 
     items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=10)
 
-    if use_ai:
+    if use_ai_filter:
         items_tuple = tuple((it["제목"], it["링크"], it["시간"], it["출처"]) for it in items)
         items = ai_filter_econ_relevant(items_tuple)
 
-    if not items:
-        st.caption("조건에 맞는 기사가 없습니다.")
-    for n in items:
-        st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
+    render_news_collapsible(items, key_prefix="news_global", top_n=10)
 
 
 def render_research_list(list_path, source_label):
