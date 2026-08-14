@@ -174,73 +174,67 @@ def get_naver_market_breadth(index_code):
 
 
 @st.cache_data(ttl=300)
+def fmt_num(n, unit=""):
+    """천단위 콤마 + 음수는 빨간색 HTML로 포맷"""
+    if n is None:
+        return "-"
+    color = "#c22" if n < 0 else "#1a1a1a"
+    sign = "+" if n > 0 else ""
+    return f"<span style='color:{color};'>{sign}{n:,.0f}{unit}</span>"
+
+
+@st.cache_data(ttl=300)
 def get_naver_investor_trend(sosok):
     """
     투자자별(외국인/기관/개인) 순매수 동향 (억원) — 당일(또는 최근 집계일)/주간누계/월간누계.
     sosok: '0'=코스피, '1'=코스닥
-    표 헤더 텍스트를 읽어 컬럼 위치를 찾으므로, 페이지 구조가 달라져도 비교적 견고합니다.
+    데이터 행은 [날짜, 개인 매도, 매수, 순매매, 외국인 매도, 매수, 순매매, 기관 매도, 매수, 순매매, ...]
+    형태의 고정 컬럼 구조를 가정 (헤더는 그룹 colspan이라 헤더 텍스트 매칭 대신 고정 위치 사용).
     """
     from bs4 import BeautifulSoup
+    import re as _re
 
-    def fetch_page(page):
+    def fetch_rows(page):
         url = f"https://finance.naver.com/sise/investorDealTrendDay.naver?sosok={sosok}&page={page}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         r = requests.get(url, headers=headers, timeout=6)
         r.encoding = "euc-kr"
-        return BeautifulSoup(r.text, "html.parser")
-
-    try:
-        soup = fetch_page(1)
+        soup = BeautifulSoup(r.text, "html.parser")
         table = soup.select_one("table.type_1")
         if not table:
+            return []
+        out = []
+        for tr in table.select("tr"):
+            tds = tr.find_all("td")
+            if len(tds) < 10:
+                continue
+            date_txt = tds[0].get_text(strip=True)
+            if not _re.match(r"\d{4}[.\-]\d{2}[.\-]\d{2}", date_txt):
+                continue
+            out.append(tds)
+        return out
+
+    def parse_num(s):
+        s = s.replace(",", "").replace("+", "").strip()
+        try:
+            return int(s)
+        except ValueError:
+            return 0
+
+    try:
+        rows_html = fetch_rows(1) + fetch_rows(2)
+        if not rows_html:
             return None
-
-        header_cells = table.select_one("tr").find_all(["th", "td"]) if table.select_one("tr") else []
-        headers_text = [h.get_text(strip=True) for h in header_cells]
-
-        def find_col(keyword):
-            for i, h in enumerate(headers_text):
-                if keyword in h:
-                    return i
-            return None
-
-        idx_date = find_col("날짜")
-        idx_indiv = find_col("개인")
-        idx_foreign = find_col("외국인")
-        idx_inst = next((i for i, h in enumerate(headers_text) if "기관" in h), None)
-
-        if idx_indiv is None or idx_foreign is None or idx_inst is None:
-            return None
-
-        def parse_num(s):
-            s = s.replace(",", "").replace("+", "").strip()
-            try:
-                return int(s)
-            except ValueError:
-                return 0
 
         all_rows = []
-        for page in (1, 2):
-            s = soup if page == 1 else fetch_page(2)
-            tbl = s.select_one("table.type_1")
-            if not tbl:
-                continue
-            for tr in tbl.select("tr"):
-                tds = tr.find_all("td")
-                if len(tds) <= max(idx_indiv, idx_foreign, idx_inst):
-                    continue
-                date_txt = tds[idx_date].get_text(strip=True) if idx_date is not None and idx_date < len(tds) else ""
-                if not date_txt:
-                    continue
-                all_rows.append({
-                    "날짜": date_txt,
-                    "개인": parse_num(tds[idx_indiv].get_text(strip=True)),
-                    "외국인": parse_num(tds[idx_foreign].get_text(strip=True)),
-                    "기관": parse_num(tds[idx_inst].get_text(strip=True)),
-                })
-
-        if not all_rows:
-            return None
+        for tds in rows_html:
+            date_txt = tds[0].get_text(strip=True)
+            all_rows.append({
+                "날짜": date_txt,
+                "개인": parse_num(tds[3].get_text(strip=True)),
+                "외국인": parse_num(tds[6].get_text(strip=True)),
+                "기관": parse_num(tds[9].get_text(strip=True)),
+            })
 
         latest = all_rows[0]
         week_rows = all_rows[:5]
@@ -262,9 +256,11 @@ def get_naver_investor_trend(sosok):
 def get_naver_sector_list(limit=15):
     """
     업종별(섹터) 등락률 상위 목록.
-    표 헤더 텍스트를 읽어 컬럼 위치를 찾으므로, 페이지 구조가 달라져도 비교적 견고합니다.
+    헤더 컬럼 위치 대신, 각 데이터 행에서 '등락률(%)' 패턴과 '거래량(정수, 콤마)' 패턴을
+    정규식으로 직접 찾아내는 방식 — 헤더가 병합(colspan)되어 있어도 영향받지 않습니다.
     """
     from bs4 import BeautifulSoup
+    import re as _re
     url = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
@@ -275,29 +271,33 @@ def get_naver_sector_list(limit=15):
         if not table:
             return []
 
-        header_row = table.select_one("tr")
-        headers_text = [h.get_text(strip=True) for h in header_row.find_all(["th", "td"])] if header_row else []
-
-        def find_col(keyword):
-            for i, h in enumerate(headers_text):
-                if keyword in h:
-                    return i
-            return None
-
-        idx_chg = find_col("등락률")
-        idx_vol = find_col("거래량")
-
         rows = []
         for tr in table.select("tr"):
-            tds = tr.find_all("td")
-            if not tds:
-                continue
             name_a = tr.find("a")
             if not name_a:
                 continue
             name = name_a.get_text(strip=True)
-            chg_text = tds[idx_chg].get_text(strip=True) if idx_chg is not None and idx_chg < len(tds) else "-"
-            vol_text = tds[idx_vol].get_text(strip=True) if idx_vol is not None and idx_vol < len(tds) else "-"
+            tds = tr.find_all("td")
+            cell_texts = [td.get_text(strip=True) for td in tds]
+
+            chg_text = "-"
+            for t in cell_texts:
+                m = _re.search(r"[+\-]?\d+\.\d+\s*%", t)
+                if m:
+                    chg_text = m.group(0).replace(" ", "")
+                    break
+
+            vol_text = "-"
+            best = None
+            for t in cell_texts:
+                m = _re.fullmatch(r"[+\-]?[\d,]+", t)
+                if m and "," in t:
+                    num = int(t.replace(",", "").replace("+", ""))
+                    if best is None or num > best:
+                        best = num
+            if best is not None:
+                vol_text = f"{best:,}"
+
             rows.append({"업종": name, "등락률(%)": chg_text, "거래량(주)": vol_text})
             if len(rows) >= limit:
                 break
@@ -892,6 +892,27 @@ def page_research_strategy():
     render_research_list("invest_list.naver", "투자정보")
 
 
+def render_investor_table(trend):
+    def row_html(label, d):
+        return (f"<tr><td style='padding:5px 8px;'>{label}</td>"
+                f"<td style='padding:5px 8px;text-align:right;'>{fmt_num(d['개인'])}</td>"
+                f"<td style='padding:5px 8px;text-align:right;'>{fmt_num(d['외국인'])}</td>"
+                f"<td style='padding:5px 8px;text-align:right;'>{fmt_num(d['기관'])}</td></tr>")
+    html = (
+        "<table style='width:100%;border-collapse:collapse;font-size:12.5px;'>"
+        "<tr style='background:#f5f5f5;'>"
+        "<th style='padding:5px 8px;text-align:left;'>구분</th>"
+        "<th style='padding:5px 8px;text-align:right;'>개인</th>"
+        "<th style='padding:5px 8px;text-align:right;'>외국인</th>"
+        "<th style='padding:5px 8px;text-align:right;'>기관</th></tr>"
+        + row_html(f"당일({trend['당일']['날짜']})", trend["당일"])
+        + row_html("주간누계", trend["주간누계"])
+        + row_html("월간누계", trend["월간누계"])
+        + "</table>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def page_index_kr():
     subtitle("국내 지수")
     df = get_kr_indices()
@@ -914,17 +935,11 @@ def page_index_kr():
         with col:
             trend = get_naver_investor_trend(sosok)
             if trend:
-                rows = [
-                    {"구분": f"당일({trend['당일']['날짜']})", "개인": trend["당일"]["개인"],
-                     "외국인": trend["당일"]["외국인"], "기관": trend["당일"]["기관"]},
-                    {"구분": "주간누계", **trend["주간누계"]},
-                    {"구분": "월간누계", **trend["월간누계"]},
-                ]
                 st.markdown(f"**{label}**")
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                render_investor_table(trend)
             else:
                 st.caption(f"{label} 수급현황을 불러오지 못했습니다.")
-    st.caption("출처: 네이버금융 · 단위 억원, 음수는 순매도")
+    st.caption("출처: 네이버금융 · 단위 억원, 음수(빨간색)는 순매도")
 
     st.markdown("---")
     st.markdown("**업종별 시세 (등락률 상위)**")
