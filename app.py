@@ -186,12 +186,37 @@ ECON_KEYWORDS = [
     "한국은행", "예산", "세금", "증권", "IPO", "상장", "인수합병", "M&A", "반도체", "배터리",
     "원자재", "유가", "스타트업", "벤처", "암호화폐", "비트코인", "은행", "보험", "카드", "대출",
     "자산", "배당", "공모주", "상장폐지", "실업률", "고용", "소비자물가", "CPI", "무역수지",
-    "경상수지", "국채", "회사채", "리츠", "ETF", "펀드매니저", "애널리스트", "리포트", "전망"
+    "경상수지", "국채", "회사채", "리츠", "ETF", "펀드매니저", "애널리스트", "리포트", "전망",
+    # 대기업/총수 관련 (공장·설비투자, 총수 발언 등 간접적으로 중요한 기사 포착용)
+    "팹", "공장", "생산시설", "메모리", "파운드리", "설비투자", "증설", "가동",
+    "삼성전자", "SK하이닉스", "SK그룹", "현대차", "기아", "LG전자", "LG에너지솔루션",
+    "롯데", "한화", "포스코", "네이버", "카카오", "쿠팡",
+    "최태원", "이재용", "정의선", "구광모", "신동빈", "김승연", "최정우",
+    "대미투자", "관세인상", "관세협상", "무역협상", "공급망"
 ]
 
 
 def filter_econ_relevant(items):
     return filter_by_keywords(items, ECON_KEYWORDS)
+
+
+@st.cache_data(ttl=600)
+def ai_filter_econ_relevant(items_tuple):
+    """AI로 경제/금융/투자 관련성을 직접 판단 (키워드보다 정확, API 키 필요).
+    items_tuple: ((제목, 링크, 시간, 출처), ...) 형태 — 캐시 위해 튜플로 받음"""
+    items = [{"제목": t, "링크": l, "시간": tm, "출처": s} for (t, l, tm, s) in items_tuple]
+    numbered = "\n".join([f"{i}: {it['제목']}" for i, it in enumerate(items)])
+    system = (
+        "당신은 뉴스 분류기입니다. 아래 번호가 매겨진 기사 제목 목록에서, 경제·금융·증시·기업 실적/투자·산업 동향과 "
+        "관련된 기사만 골라 번호 배열을 오직 JSON으로만 답하세요. 순수 정치/외교/사회/연예/스포츠 기사는 제외하되, "
+        "기업 총수 발언, 공장·설비 투자, 무역/관세처럼 경제에 실질적 영향을 주는 기사는 포함하세요. "
+        "형식: {\"keep\": [0,2,5,...]}"
+    )
+    data, err = ask_ai(numbered, system_prompt=system, want_json=True, use_web_search=False, max_tokens=500)
+    if data and "keep" in data:
+        idx = set(data["keep"])
+        return [it for i, it in enumerate(items) if i in idx]
+    return items  # 실패 시 원본 그대로
 
 
 @st.cache_data(ttl=600)
@@ -273,13 +298,15 @@ def ask_ai(user_prompt, system_prompt=None, want_json=False, use_web_search=True
 
 @st.cache_data(ttl=1800)
 def generate_ai_briefing(context_text):
-    """Anthropic API로 챕터형 서술 브리핑 생성 (API 키 필요)"""
+    """Anthropic API로 고정 카테고리·중요도순 브리핑 생성 (API 키 필요)"""
     system = (
         "당신은 투자자를 위한 시황 브리핑 애널리스트입니다. 아래 제공된 최신 헤드라인들을 참고해서, "
-        "오늘 시장에 실제로 영향을 줄 만한 주요 이벤트를 2~4개 챕터로 나누어 보고서 형식으로 작성하세요. "
-        "각 챕터는 '## 챕터 제목' 형식의 마크다운 소제목 + 3~5문장의 설명으로 구성합니다. "
-        "예: '## 미-이란 휴전 합의 가능성' 같은 식으로, 실제 헤드라인에 근거해 구체적인 챕터 제목을 붙이세요. "
-        "확인되지 않은 내용은 추측하지 말고, 헤드라인에 나온 사실 위주로 작성하세요. 한국어로 작성하세요."
+        "반드시 아래 5개 카테고리 순서 그대로, 마크다운 '## 카테고리명' 소제목으로 브리핑을 작성하세요:\n"
+        "## 지수\n## 환율·금리\n## 실적·공시·특징주\n## 산업·기업 이슈\n## 기타 주요 이슈\n\n"
+        "각 카테고리 안에서는 오늘 시장에 영향이 큰 순서(중요도 순)로 2~4개 항목을 글머리표(-)로 정리하고, "
+        "각 항목은 1~2문장으로 간결하게 씁니다. 해당 카테고리에 관련 헤드라인이 전혀 없으면 "
+        "'- 특이사항 없음'이라고만 쓰고 넘어가세요. 확인되지 않은 내용은 추측하지 말고 헤드라인에 나온 "
+        "사실 위주로 작성하세요. 한국어로 작성하세요."
     )
     prompt = f"오늘의 헤드라인 목록:\n{context_text}\n\n위 내용을 바탕으로 브리핑을 작성해줘."
     return ask_ai(prompt, system_prompt=system, want_json=False, max_tokens=1500)
@@ -399,10 +426,24 @@ def page_briefing():
 
 def page_news_domestic():
     subtitle("국내 최신 뉴스 (연합뉴스·매일경제·한국경제·서울경제·이데일리)")
-    only_econ = st.checkbox("경제·금융·투자 관련만 보기", value=True, key="news_domestic_filter")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        only_econ = st.checkbox("경제·금융·투자 관련만 보기", value=True, key="news_domestic_filter")
+    with c2:
+        use_ai = False
+        if only_econ and get_anthropic_client() is not None:
+            use_ai = st.checkbox("AI로 정밀 판단 (더 정확, 소액 과금)", value=False, key="news_domestic_ai_filter")
+
     items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=10 if only_econ else 5)
+
     if only_econ:
-        items = filter_econ_relevant(items)
+        if use_ai:
+            items_tuple = tuple((it["제목"], it["링크"], it["시간"], it["출처"]) for it in items)
+            items = ai_filter_econ_relevant(items_tuple)
+        else:
+            items = filter_econ_relevant(items)
+
     if not items:
         st.caption("조건에 맞는 기사가 없습니다.")
     for n in items:
