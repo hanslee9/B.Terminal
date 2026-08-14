@@ -511,60 +511,65 @@ def page_policy_kr():
 
 def render_ai_chat_panel():
     """화면 우측에 항상 떠 있는 AI 대화 패널 (다른 메뉴를 보면서 동시에 사용 가능)"""
-    st.markdown("<div style='font-weight:700;font-size:14px;color:#c05a00;margin-bottom:6px;'>🤖 AI 대화</div>", unsafe_allow_html=True)
 
-    has_key = get_anthropic_client() is not None
-
-    if has_key:
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
-
-        # 답변/질문 이력 (위쪽) — 대화가 이어질수록 예전 내용이 위로 밀려 올라감
-        chat_box = st.container(height=380)
-        with chat_box:
-            for role, msg in st.session_state.chat_history:
-                with st.chat_message(role):
-                    st.markdown(msg)
-
-        # 질문 입력창 (이력 바로 아래)
-        q = st.chat_input("무엇이든 물어보세요", key="ai_panel_input")
-        if q:
-            st.session_state.chat_history.append(("user", q))
-            system = (
-                "당신은 이 투자정보 터미널 앱의 AI 비서입니다. 필요시 웹검색을 사용해 최신 정보로 "
-                "간결하고 정확하게 한국어로 답하세요. 종목명을 물으면 정확한 티커(Yahoo Finance 기준, "
-                "한국 종목은 .KS/.KQ 접미사)도 함께 알려주세요. 투자 조언이 아닌 정보 제공 목적임을 "
-                "인지하고, 확정적인 매수/매도 추천은 하지 마세요. 답변은 패널이 좁으니 간결하게 작성하세요."
-            )
-            answer, err = ask_ai(q, system_prompt=system, max_tokens=800)
-            st.session_state.chat_history.append(("assistant", answer if answer else f"오류: {err}"))
-            st.rerun()
-
-        if st.session_state.chat_history:
-            if st.button("대화 초기화", key="ai_panel_reset"):
-                st.session_state.chat_history = []
-                st.rerun()
-    else:
-        st.info(
-            "AI 대화를 쓰려면 Anthropic API 키가 필요합니다.\n\n"
-            "Streamlit Cloud → Manage app → Settings → Secrets 에 추가:\n\n"
-            "`ANTHROPIC_API_KEY = \"sk-ant-...\"`"
-        )
-
-    # 안내 문구 (질문창 바로 아래, 작은 글씨)
+    # 대화창 폭 조절 슬라이더 — 패널 맨 위, 아주 작은 이탤릭체
     st.markdown(
-        "<div style='font-size:10.5px;color:#aaa;font-style:italic;margin-top:6px;'>예: 'SK하이닉스 티커가 뭐야?'</div>",
-        unsafe_allow_html=True
-    )
-
-    # 대화창 폭 조절 슬라이더 (맨 아래, 아주 작은 이탤릭체)
-    st.markdown(
-        "<div style='font-size:9.5px;color:#ccc;font-style:italic;margin-top:10px;'>AI 대화창 폭</div>",
+        "<div style='font-size:9.5px;color:#bbb;font-style:italic;'>AI 대화창 폭</div>",
         unsafe_allow_html=True
     )
     if "chat_pct" not in st.session_state:
         st.session_state.chat_pct = 25
     st.slider("AI 대화창 폭", min_value=15, max_value=45, step=5, key="chat_pct", label_visibility="collapsed")
+
+    st.markdown("<div style='font-weight:700;font-size:14px;color:#c05a00;margin:4px 0 8px;'>🤖 AI 대화</div>", unsafe_allow_html=True)
+
+    has_key = get_anthropic_client() is not None
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # 답변/질문 이력 — 경계가 뚜렷한 박스, 대화가 이어질수록 예전 내용이 위로 밀려 올라감
+    chat_box = st.container(height=380, border=True)
+    with chat_box:
+        if st.session_state.chat_history:
+            for role, msg in st.session_state.chat_history:
+                with st.chat_message(role):
+                    st.markdown(msg)
+        else:
+            st.markdown(
+                "<div style='color:#ccc;font-size:12px;text-align:center;margin-top:150px;'>대화 내용이 여기 표시됩니다</div>",
+                unsafe_allow_html=True
+            )
+
+    # 질문 입력창 — 답변창 바로 아래
+    q = st.chat_input("무엇이든 물어보세요", key="ai_panel_input", disabled=not has_key)
+    if q and has_key:
+        st.session_state.chat_history.append(("user", q))
+        system = (
+            "당신은 이 투자정보 터미널 앱의 AI 비서입니다. 필요시 웹검색을 사용해 최신 정보로 "
+            "간결하고 정확하게 한국어로 답하세요. 종목명을 물으면 정확한 티커(Yahoo Finance 기준, "
+            "한국 종목은 .KS/.KQ 접미사)도 함께 알려주세요. 투자 조언이 아닌 정보 제공 목적임을 "
+            "인지하고, 확정적인 매수/매도 추천은 하지 마세요. 답변은 패널이 좁으니 간결하게 작성하세요."
+        )
+        answer, err = ask_ai(q, system_prompt=system, max_tokens=800)
+        st.session_state.chat_history.append(("assistant", answer if answer else f"오류: {err}"))
+        st.rerun()
+
+    if st.session_state.chat_history:
+        if st.button("대화 초기화", key="ai_panel_reset", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    # 안내 문구 — 맨 아래, 아주 작은 이탤릭체
+    if has_key:
+        hint = "예: 'SK하이닉스 티커가 뭐야?'"
+    else:
+        hint = ('AI 대화를 쓰려면 Anthropic API 키가 필요합니다. Streamlit Cloud → Manage app → '
+                'Settings → Secrets 에 ANTHROPIC_API_KEY = "sk-ant-..." 추가')
+    st.markdown(
+        f"<div style='font-size:10px;color:#bbb;font-style:italic;margin-top:8px;'>{hint}</div>",
+        unsafe_allow_html=True
+    )
 
 
 # ─────────────────────────────────────────────
@@ -621,7 +626,9 @@ col_main, col_chat = st.columns([100 - chat_pct, chat_pct])
 
 with col_main:
     major, minor = st.session_state.page
-    st.markdown(f"<div class='page-title'>{major} · {minor}</div>", unsafe_allow_html=True)
+    major_text = major.split(" ", 1)[-1] if " " in major else major  # 이모지 제거한 순수 텍스트
+    title = major if minor == major_text else f"{major} · {minor}"
+    st.markdown(f"<div class='page-title'>{title}</div>", unsafe_allow_html=True)
     MENU[major][minor]()
 
 with col_chat:
