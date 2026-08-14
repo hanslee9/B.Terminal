@@ -104,7 +104,7 @@ def get_us_indices():
     for tk, name in tickers.items():
         try:
             t = yf.Ticker(tk)
-            h = t.history(period="2d")
+            h = t.history(period="5d").dropna(subset=["Close"])  # 휴장일 빈 행 제외
             last = h["Close"].iloc[-1]
             prev = h["Close"].iloc[-2]
             chg = (last - prev) / prev * 100
@@ -123,11 +123,11 @@ def get_kr_indices():
     for tk, name in tickers.items():
         try:
             t = yf.Ticker(tk)
-            h = t.history(period="5d")
+            h = t.history(period="10d").dropna(subset=["Close"])  # 휴장일 빈 행 제외
             last_row = h.iloc[-1]
             prev_close = h["Close"].iloc[-2]
             chg = (last_row["Close"] - prev_close) / prev_close * 100
-            h1y = t.history(period="1y")
+            h1y = t.history(period="1y").dropna(subset=["Close"])
             high52 = h1y["High"].max() if not h1y.empty else None
             low52 = h1y["Low"].min() if not h1y.empty else None
             rows.append({
@@ -188,71 +188,58 @@ def get_naver_investor_trend(sosok):
     """
     투자자별(외국인/기관/개인) 순매수 동향 (억원) — 당일/주간누계/월간누계.
     sosok: '0'=코스피, '1'=코스닥
-    ※ 네이버 페이지는 데이터가 자바스크립트로 채워져 정적 스크래핑이 불가하고,
-      pykrx 패키지는 matplotlib 등 무거운 의존성 때문에 배포 설치가 오래 걸려 제외했습니다.
-      대신 pykrx가 내부적으로 쓰는 한국거래소(KRX) 공개 API를 requests로 직접 호출합니다.
+    ※ data.krx.co.kr는 2024-12부터 로그인 없이는 차단되어(전업계 공통 이슈),
+      대신 stock.naver.com의 비공식 공개 API(로그인/쿠키 불필요, 오픈소스에서 검증됨)를 사용합니다.
+      정확한 응답 필드명은 배포 후 진단모드로 확인이 필요할 수 있습니다.
     """
-    market_id = "STK" if str(sosok) == "0" else "KSQ"
-
+    market_type = "KOSPI" if str(sosok) == "0" else "KOSDAQ"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd",
-        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://stock.naver.com/",
     }
-
     try:
-        session = requests.Session()
-        # 쿠키 확보용 warmup 요청
-        session.get("https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd",
-                     headers=headers, timeout=6)
-
         today = datetime.now()
-        fromdate = (today - pd.Timedelta(days=40)).strftime("%Y%m%d")
-        todate = today.strftime("%Y%m%d")
-
+        bizdate = today.strftime("%Y%m%d")
+        url = "https://stock.naver.com/api/domestic/market/trend/daily"
         params = {
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT02202",
-            "strtDd": fromdate,
-            "endDd": todate,
-            "mktId": market_id,
-            "etf": "",
-            "etn": "",
-            "els": "",
-            "trdVolVal": "2",  # 거래대금 기준
-            "askBid": "3",     # 순매수
+            "tradeType": "KRX",
+            "marketType": market_type,
+            "bizdate": bizdate,
+            "startIdx": 0,
+            "pageSize": 20,
         }
-        resp = session.post("https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
-                             headers=headers, data=params, timeout=8)
-        data = resp.json()
-        rows_raw = data.get("output", []) or data.get("OutBlock_1", [])
-        if not rows_raw:
+        r = requests.get(url, headers=headers, params=params, timeout=8)
+        data = r.json()
+        items = data if isinstance(data, list) else data.get("items", data.get("result", []))
+        if not items:
             return None
 
-        def parse_num(s):
-            s = str(s).replace(",", "").strip()
-            try:
-                return int(s)
-            except ValueError:
-                return 0
+        def get_val(d, *keys):
+            for k in keys:
+                if k in d:
+                    v = d[k]
+                    try:
+                        return int(str(v).replace(",", ""))
+                    except (ValueError, TypeError):
+                        pass
+            return 0
 
         rows = []
-        for r in rows_raw:
-            date_txt = str(r.get("TRD_DD", "")).replace("/", "-")
+        for it in items:
+            date_txt = str(it.get("bizdate", it.get("date", it.get("localDate", ""))))
             if not date_txt:
                 continue
             rows.append({
                 "날짜": date_txt,
-                "기관": parse_num(r.get("TRDVAL1", 0)) // 100_000_000,
-                "기타법인": parse_num(r.get("TRDVAL2", 0)) // 100_000_000,
-                "개인": parse_num(r.get("TRDVAL3", 0)) // 100_000_000,
-                "외국인": parse_num(r.get("TRDVAL4", 0)) // 100_000_000,
+                "개인": get_val(it, "individualNetBuy", "individual", "personal") // 100_000_000,
+                "외국인": get_val(it, "foreignerNetBuy", "foreigner", "foreign") // 100_000_000,
+                "기관": get_val(it, "institutionNetBuy", "institution", "organ") // 100_000_000,
             })
 
         if not rows:
             return None
 
-        rows.sort(key=lambda x: x["날짜"], reverse=True)  # 최신 날짜 먼저
         latest = rows[0]
         week_rows = rows[:5]
         month_rows = rows[:20]
@@ -998,29 +985,26 @@ def page_index_kr():
         st.markdown("**업종별시세 원본**")
         st.json(debug_dump_table("https://finance.naver.com/sise/sise_group.naver?type=upjong", max_rows=5))
 
-        st.markdown("**수급현황(KRX API) 원본 응답**")
+        st.markdown("**수급현황(stock.naver.com API) 원본 응답**")
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd",
-                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://stock.naver.com/",
             }
-            session = requests.Session()
-            session.get("https://data.krx.co.kr/contents/MDC/MDI/outerLoader/index.cmd", headers=headers, timeout=6)
             today = datetime.now()
             params = {
-                "bld": "dbms/MDC/STAT/standard/MDCSTAT02202",
-                "strtDd": (today - pd.Timedelta(days=5)).strftime("%Y%m%d"),
-                "endDd": today.strftime("%Y%m%d"),
-                "mktId": "STK", "etf": "", "etn": "", "els": "",
-                "trdVolVal": "2", "askBid": "3",
+                "tradeType": "KRX",
+                "marketType": "KOSPI",
+                "bizdate": today.strftime("%Y%m%d"),
+                "startIdx": 0,
+                "pageSize": 3,
             }
-            resp = session.post("https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
-                                 headers=headers, data=params, timeout=8)
-            st.code(resp.text[:2000])
+            resp = requests.get("https://stock.naver.com/api/domestic/market/trend/daily",
+                                 headers=headers, params=params, timeout=8)
+            st.code(f"status_code: {resp.status_code}\n\n{resp.text[:2500]}")
         except Exception as e:
-            st.error(f"KRX API 진단 실패: {e}")
+            st.error(f"진단 실패: {e}")
 
 
 def page_index_us():
