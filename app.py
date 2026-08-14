@@ -270,8 +270,30 @@ def generate_ai_briefing(context_text):
 
 
 @st.cache_data(ttl=3600)
+def resolve_ticker_free(query):
+    """야후파이낸스 무료 종목검색(키 불필요)으로 티커 자동 인식.
+    반환: {"ticker": "000660.KS", "name": "SK하이닉스"} 또는 None"""
+    try:
+        r = requests.get(
+            "https://query1.finance.yahoo.com/v1/finance/search",
+            params={"q": query, "quotesCount": 5, "newsCount": 0},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=5
+        )
+        data = r.json()
+        quotes = data.get("quotes", [])
+        # 종목(EQUITY)만, 한국 종목은 .KS/.KQ 우선순위 없이 첫 매치 사용
+        for q in quotes:
+            if q.get("quoteType") == "EQUITY" and q.get("symbol"):
+                return {"ticker": q["symbol"], "name": q.get("longname") or q.get("shortname") or query}
+        return None
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600)
 def resolve_ticker_via_ai(query):
-    """사람이 입력한 종목명(띄어쓰기·오타 포함)을 실제 yfinance 티커로 변환.
+    """(무료 조회 실패 시 폴백) AI로 티커 인식 — API 키 필요.
     반환: {"ticker": "000660.KS", "name": "SK하이닉스"} 또는 None"""
     system = (
         "당신은 증권 티커 조회 도우미입니다. 사용자가 입력한 종목명(띄어쓰기, 약칭, 오타가 있을 수 있음)에 해당하는 "
@@ -314,8 +336,6 @@ def search_stock(query):
 # ─────────────────────────────────────────────
 
 def page_briefing():
-    subtitle("브리핑")
-
     kr_items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=6)
     gl_items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=6)
     all_items = kr_items + gl_items
@@ -326,15 +346,8 @@ def page_briefing():
     if text:
         st.markdown(text)
         st.caption(f"AI 생성 · {datetime.now().strftime('%Y-%m-%d %H:%M')} 기준 헤드라인 참고 · 참고용, 투자판단 근거로 단독 사용 금지")
-    else:
-        st.info(
-            "AI 서술형 종합 브리핑(여러 이슈를 챕터로 묶어 새로 써주는 기능)을 쓰려면 Anthropic API 키가 필요합니다. "
-            "아래 표만으로도 충분하시면 키 설정 없이 계속 이렇게 쓰시면 됩니다."
-        )
-        if err and err != "API 키 없음":
-            st.caption(f"오류 상세: {err}")
+        st.markdown("---")
 
-    st.markdown("---")
     st.caption("모두 문서(텍스트/PDF) 형태로 발행하는 곳만 정리했습니다. 유튜브 등 영상 위주 채널은 제외했습니다. "
                "기관명을 클릭하면 해당 페이지로 바로 이동합니다.")
 
@@ -357,25 +370,15 @@ def page_briefing():
             ("LG경영연구원", "https://www.lgbr.co.kr/business/list.do"),
             ("우리금융경영연구소", "https://www.wfri.re.kr/"),
         ],
-        "포털": [
+        "포털 / 해외": [
             ("네이버 금융", "https://finance.naver.com/research/"),
             ("야후파이낸스", "https://finance.yahoo.com"),
+            ("Axios Markets", "https://www.axios.com/newsletters/axios-markets"),
+            ("Morning Brew", "https://www.morningbrew.com/daily"),
+            ("Seeking Alpha - Wall Street Breakfast", "https://seekingalpha.com/market-news/wall-street-breakfast"),
+            ("The Daily Upside", "https://www.thedailyupside.com"),
         ],
-        "기타": [],
     })
-
-    st.markdown("---")
-    st.markdown("**중소형 증권사 모닝브리프 (원문, 네이버금융 경유 · 실시간 목록)**")
-    st.caption("증권사 리서치센터가 매일 문장으로 작성하는 실제 시황 브리핑입니다. AI 요약이 아닌 원문입니다.")
-    brief_items = get_naver_research("market_info_list.naver", limit=5)
-    if brief_items and "조회 실패" not in brief_items[0]["제목"]:
-        for it in brief_items:
-            st.markdown(
-                f"- [{it['제목']}]({it['링크']})  \n  <span class='src-note'>{it['증권사']} · {it['날짜']}</span>",
-                unsafe_allow_html=True
-            )
-    else:
-        st.caption("현재 불러온 항목이 없습니다.")
 
 
 def page_news_domestic():
@@ -454,8 +457,17 @@ def page_stock_search():
         resolved_note = None
 
         if "error" in d:
-            # 직접 조회 실패 → AI로 정확한 티커를 찾아 재시도 (띄어쓰기/약칭/오타 대응)
-            with st.spinner("정확한 티커를 못 찾아서 AI로 확인 중..."):
+            # 1순위: 무료 야후파이낸스 검색 (키 불필요)
+            resolved = resolve_ticker_free(q)
+            if resolved:
+                d2 = search_stock(resolved["ticker"])
+                if "error" not in d2:
+                    d = d2
+                    resolved_note = f"'{q}' → **{resolved['name']} ({resolved['ticker']})** 로 자동 인식했습니다. (무료 검색)"
+
+        if "error" in d and get_anthropic_client() is not None:
+            # 2순위: 무료 검색도 실패했고 AI 키가 있으면 AI로 재시도
+            with st.spinner("AI로 정확한 티커 확인 중..."):
                 resolved = resolve_ticker_via_ai(q)
             if resolved:
                 d2 = search_stock(resolved["ticker"])
@@ -465,8 +477,6 @@ def page_stock_search():
 
         if "error" in d:
             st.error(f"조회 실패: 종목을 찾지 못했습니다. (마지막 시도값: {q})")
-            if get_anthropic_client() is None:
-                st.caption("AI 자동 티커 인식을 쓰려면 Anthropic API 키가 필요합니다 (브리핑 메뉴 안내 참고).")
         else:
             if resolved_note:
                 st.success(resolved_note)
@@ -480,7 +490,7 @@ def page_stock_search():
                 if d.get("hist") is not None and not d["hist"].empty:
                     st.line_chart(d["hist"]["Close"])
             st.write(d.get("summary", ""))
-    st.caption("출처: Yahoo Finance(yfinance) · 정확한 티커를 모르면 그냥 종목명을 입력하세요 (AI가 자동 인식)")
+    st.caption("출처: Yahoo Finance(yfinance) · 정확한 티커를 모르면 그냥 종목명을 입력하세요 (무료 자동 인식, API 키 불필요)")
 
 
 def page_policy_us():
@@ -503,41 +513,58 @@ def render_ai_chat_panel():
     """화면 우측에 항상 떠 있는 AI 대화 패널 (다른 메뉴를 보면서 동시에 사용 가능)"""
     st.markdown("<div style='font-weight:700;font-size:14px;color:#c05a00;margin-bottom:6px;'>🤖 AI 대화</div>", unsafe_allow_html=True)
 
-    if get_anthropic_client() is None:
+    has_key = get_anthropic_client() is not None
+
+    if has_key:
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+
+        # 답변/질문 이력 (위쪽) — 대화가 이어질수록 예전 내용이 위로 밀려 올라감
+        chat_box = st.container(height=380)
+        with chat_box:
+            for role, msg in st.session_state.chat_history:
+                with st.chat_message(role):
+                    st.markdown(msg)
+
+        # 질문 입력창 (이력 바로 아래)
+        q = st.chat_input("무엇이든 물어보세요", key="ai_panel_input")
+        if q:
+            st.session_state.chat_history.append(("user", q))
+            system = (
+                "당신은 이 투자정보 터미널 앱의 AI 비서입니다. 필요시 웹검색을 사용해 최신 정보로 "
+                "간결하고 정확하게 한국어로 답하세요. 종목명을 물으면 정확한 티커(Yahoo Finance 기준, "
+                "한국 종목은 .KS/.KQ 접미사)도 함께 알려주세요. 투자 조언이 아닌 정보 제공 목적임을 "
+                "인지하고, 확정적인 매수/매도 추천은 하지 마세요. 답변은 패널이 좁으니 간결하게 작성하세요."
+            )
+            answer, err = ask_ai(q, system_prompt=system, max_tokens=800)
+            st.session_state.chat_history.append(("assistant", answer if answer else f"오류: {err}"))
+            st.rerun()
+
+        if st.session_state.chat_history:
+            if st.button("대화 초기화", key="ai_panel_reset"):
+                st.session_state.chat_history = []
+                st.rerun()
+    else:
         st.info(
             "AI 대화를 쓰려면 Anthropic API 키가 필요합니다.\n\n"
             "Streamlit Cloud → Manage app → Settings → Secrets 에 추가:\n\n"
             "`ANTHROPIC_API_KEY = \"sk-ant-...\"`"
         )
-        st.caption("예: 'SK하이닉스 티커가 뭐야?'")
-        return
 
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    # 안내 문구 (질문창 바로 아래, 작은 글씨)
+    st.markdown(
+        "<div style='font-size:10.5px;color:#aaa;font-style:italic;margin-top:6px;'>예: 'SK하이닉스 티커가 뭐야?'</div>",
+        unsafe_allow_html=True
+    )
 
-    chat_box = st.container(height=420)
-    with chat_box:
-        for role, msg in st.session_state.chat_history:
-            with st.chat_message(role):
-                st.markdown(msg)
-
-    q = st.chat_input("무엇이든 물어보세요", key="ai_panel_input")
-    if q:
-        st.session_state.chat_history.append(("user", q))
-        system = (
-            "당신은 이 투자정보 터미널 앱의 AI 비서입니다. 필요시 웹검색을 사용해 최신 정보로 "
-            "간결하고 정확하게 한국어로 답하세요. 종목명을 물으면 정확한 티커(Yahoo Finance 기준, "
-            "한국 종목은 .KS/.KQ 접미사)도 함께 알려주세요. 투자 조언이 아닌 정보 제공 목적임을 "
-            "인지하고, 확정적인 매수/매도 추천은 하지 마세요. 답변은 패널이 좁으니 간결하게 작성하세요."
-        )
-        answer, err = ask_ai(q, system_prompt=system, max_tokens=800)
-        st.session_state.chat_history.append(("assistant", answer if answer else f"오류: {err}"))
-        st.rerun()
-
-    if st.session_state.chat_history:
-        if st.button("대화 초기화", key="ai_panel_reset"):
-            st.session_state.chat_history = []
-            st.rerun()
+    # 대화창 폭 조절 슬라이더 (맨 아래, 아주 작은 이탤릭체)
+    st.markdown(
+        "<div style='font-size:9.5px;color:#ccc;font-style:italic;margin-top:10px;'>AI 대화창 폭</div>",
+        unsafe_allow_html=True
+    )
+    if "chat_pct" not in st.session_state:
+        st.session_state.chat_pct = 25
+    st.slider("AI 대화창 폭", min_value=15, max_value=45, step=5, key="chat_pct", label_visibility="collapsed")
 
 
 # ─────────────────────────────────────────────
@@ -573,27 +600,23 @@ MENU = {
 # ─────────────────────────────────────────────
 # 사이드바 렌더 + 라우팅 (대분류를 폴더처럼 펼쳐서 하위 항목 클릭)
 # ─────────────────────────────────────────────
-st.sidebar.title("📊 TERMINAL")
-
 if "page" not in st.session_state:
     st.session_state.page = ("🗞️ 브리핑", "브리핑")
 
 for major, minors in MENU.items():
     is_current_group = st.session_state.page[0] == major
-    with st.sidebar.expander(major, expanded=is_current_group):
+    with st.sidebar.expander(f"**{major}**", expanded=is_current_group):
         for minor in minors:
             is_active = (major, minor) == st.session_state.page
-            label = f"● {minor}" if is_active else minor
+            label = f"**● {minor}**" if is_active else f"**{minor}**"
             if st.button(label, key=f"nav-{major}-{minor}", use_container_width=True):
                 st.session_state.page = (major, minor)
                 st.rerun()
 
-st.sidebar.markdown("---")
-chat_pct = st.sidebar.slider("AI 대화창 폭 (%)", min_value=15, max_value=45, value=25, step=5)
-
 # ─────────────────────────────────────────────
-# 본문: 좌측(선택 메뉴) + 우측(AI 대화 상시 패널, 폭 조절 가능)
+# 본문: 좌측(선택 메뉴) + 우측(AI 대화 상시 패널, 폭 조절은 패널 내부 슬라이더로)
 # ─────────────────────────────────────────────
+chat_pct = st.session_state.get("chat_pct", 25)
 col_main, col_chat = st.columns([100 - chat_pct, chat_pct])
 
 with col_main:
