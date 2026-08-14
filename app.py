@@ -245,18 +245,29 @@ def page_briefing():
     if text:
         st.markdown(text)
         st.caption(f"AI 생성 · {datetime.now().strftime('%Y-%m-%d %H:%M')} 기준 헤드라인 참고 · 참고용, 투자판단 근거로 단독 사용 금지")
+        st.markdown("---")
+
+    # API 키 유무와 무관하게, 증권사가 직접 쓴 문장형 데일리 브리프도 함께 노출
+    st.markdown("**증권사 모닝브리프 (원문)**")
+    st.caption("증권사 리서치센터가 매일 문장으로 작성하는 실제 시황 브리핑입니다. AI 요약이 아닌 원문입니다.")
+    brief_items = get_naver_research("market_info_list.naver", limit=5)
+    if brief_items and "조회 실패" not in brief_items[0]["제목"]:
+        for it in brief_items:
+            st.markdown(
+                f"- [{it['제목']}]({it['링크']})  \n  <span class='src-note'>{it['증권사']} · {it['날짜']}</span>",
+                unsafe_allow_html=True
+            )
     else:
-        st.warning(
-            "AI 서술형 브리핑을 쓰려면 Anthropic API 키가 필요합니다. "
-            "Streamlit Cloud → Manage app → Settings → Secrets 에 아래처럼 추가해주세요:\n\n"
-            "`ANTHROPIC_API_KEY = \"sk-ant-...\"`"
+        st.caption("현재 불러온 항목이 없습니다.")
+
+    if not text:
+        st.markdown("---")
+        st.info(
+            "AI 서술형 종합 브리핑(여러 이슈를 챕터로 묶어 새로 써주는 기능)을 쓰려면 Anthropic API 키가 필요합니다. "
+            "위의 증권사 모닝브리프만으로도 충분하시면 키 설정 없이 계속 이렇게 쓰시면 됩니다."
         )
         if err and err != "API 키 없음":
             st.caption(f"오류 상세: {err}")
-        st.markdown("---")
-        st.caption("임시로 헤드라인 목록을 대신 보여드립니다.")
-        for it in all_items[:10]:
-            st.markdown(f"- [{it['제목']}]({it['링크']}) <span class='src-note'>· {it['출처']}</span>", unsafe_allow_html=True)
 
 
 def page_news_domestic():
