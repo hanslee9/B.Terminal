@@ -149,6 +149,9 @@ FEEDS_DOMESTIC = {
 }
 FEEDS_GLOBAL = {
     "Reuters": "https://feeds.reuters.com/reuters/businessNews",
+    "CNBC": "https://www.cnbc.com/id/10001147/device/rss/rss.html",
+    "MarketWatch": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+    "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
 }
 
 
@@ -451,8 +454,20 @@ def page_news_domestic():
 
 
 def page_news_global():
-    subtitle("해외 최신 뉴스 (Reuters Business)")
+    subtitle("해외 최신 뉴스 (Reuters·CNBC·MarketWatch·Yahoo Finance)")
+
+    use_ai = False
+    if get_anthropic_client() is not None:
+        use_ai = st.checkbox("AI로 경제·금융 관련성 정밀 판단 (소액 과금)", value=False, key="news_global_ai_filter")
+
     items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=10)
+
+    if use_ai:
+        items_tuple = tuple((it["제목"], it["링크"], it["시간"], it["출처"]) for it in items)
+        items = ai_filter_econ_relevant(items_tuple)
+
+    if not items:
+        st.caption("조건에 맞는 기사가 없습니다.")
     for n in items:
         st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
 
