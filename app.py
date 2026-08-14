@@ -146,8 +146,70 @@ def filter_by_keywords(items, keywords):
     return [it for it in items if any(kw in it["제목"] for kw in keywords)]
 
 
-@st.cache_data(ttl=60)
-def search_stock(query):
+@st.cache_data(ttl=600)
+def get_naver_research(list_path, limit=15):
+    """
+    네이버금융 '리서치' 코너 (증권사 애널리스트 리포트 모음) 스크래핑.
+    list_path 예: market_info_list.naver, industry_list.naver,
+                  company_list.naver, invest_list.naver
+    ※ 네이버가 페이지 구조를 바꾸면 파싱이 깨질 수 있습니다 —
+      항목이 비어 나오면 알려주시면 선택자를 갱신하겠습니다.
+    """
+    from bs4 import BeautifulSoup
+    url = f"https://finance.naver.com/research/{list_path}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    try:
+        r = requests.get(url, headers=headers, timeout=6)
+        r.encoding = "euc-kr"
+        soup = BeautifulSoup(r.text, "html.parser")
+        rows = soup.select("table.type_1 tr")
+        items = []
+        for tr in rows:
+            tds = tr.find_all("td")
+            if len(tds) < 4:
+                continue
+            title_a = tds[0].find("a")
+            if not title_a:
+                continue
+            title = title_a.get_text(strip=True)
+            link = "https://finance.naver.com/research/" + title_a.get("href", "")
+            broker = tds[1].get_text(strip=True)
+            date = tds[-1].get_text(strip=True)
+            if title:
+                items.append({"제목": title, "링크": link, "증권사": broker, "날짜": date})
+            if len(items) >= limit:
+                break
+        return items
+    except Exception as e:
+        return [{"제목": f"조회 실패: {e}", "링크": "", "증권사": "", "날짜": ""}]
+
+
+@st.cache_data(ttl=1800)
+def generate_ai_briefing(context_text):
+    """Anthropic API로 챕터형 서술 브리핑 생성 (API 키 필요)"""
+    import anthropic
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", None)
+    if not api_key:
+        return None, "API 키 없음"
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        system = (
+            "당신은 투자자를 위한 시황 브리핑 애널리스트입니다. 아래 제공된 최신 헤드라인들을 참고해서, "
+            "오늘 시장에 실제로 영향을 줄 만한 주요 이벤트를 2~4개 챕터로 나누어 보고서 형식으로 작성하세요. "
+            "각 챕터는 '## 챕터 제목' 형식의 마크다운 소제목 + 3~5문장의 설명으로 구성합니다. "
+            "예: '## 미-이란 휴전 합의 가능성' 같은 식으로, 실제 헤드라인에 근거해 구체적인 챕터 제목을 붙이세요. "
+            "확인되지 않은 내용은 추측하지 말고, 헤드라인에 나온 사실 위주로 작성하세요. 한국어로 작성하세요."
+        )
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1500,
+            system=system,
+            messages=[{"role": "user", "content": f"오늘의 헤드라인 목록:\n{context_text}\n\n위 내용을 바탕으로 브리핑을 작성해줘."}]
+        )
+        text = "".join([b.text for b in msg.content if b.type == "text"])
+        return text, None
+    except Exception as e:
+        return None, str(e)
     """종목 검색 (해외: yfinance / 국내: FinanceDataReader)"""
     import yfinance as yf
     try:
@@ -171,90 +233,77 @@ def search_stock(query):
 # ─────────────────────────────────────────────
 
 def page_briefing():
-    subtitle("오늘의 브리핑 (핵심 이슈 종합)")
-    st.caption("※ 현재는 AI 서술형 요약이 아니라, 여러 소스 헤드라인 중 핵심으로 보이는 항목을 규칙 기반으로 골라 정리한 버전입니다. "
-               "AI가 문장으로 써주는 진짜 '보고서형' 브리핑은 별도 API 키 연동 후 업그레이드 예정입니다.")
+    subtitle("브리핑")
 
     kr_items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=6)
     gl_items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=6)
+    all_items = kr_items + gl_items
+    context = "\n".join([f"- [{it['출처']}] {it['제목']}" for it in all_items])
 
-    important_kw = ["코스피", "코스닥", "금리", "환율", "연준", "Fed", "실적", "무역", "관세",
-                     "반도체", "수출", "인플레이션", "CPI", "FOMC", "달러", "국고채"]
+    text, err = generate_ai_briefing(context)
 
-    kr_pick = filter_by_keywords(kr_items, important_kw)[:6]
-    gl_pick = filter_by_keywords(gl_items, important_kw)[:4]
-
-    st.markdown("**국내 시장 핵심 이슈**")
-    if kr_pick:
-        for n in kr_pick:
-            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
+    if text:
+        st.markdown(text)
+        st.caption(f"AI 생성 · {datetime.now().strftime('%Y-%m-%d %H:%M')} 기준 헤드라인 참고 · 참고용, 투자판단 근거로 단독 사용 금지")
     else:
-        st.caption("조건에 맞는 핵심 이슈를 찾지 못했습니다.")
-
-    st.markdown("**해외 시장 핵심 이슈**")
-    if gl_pick:
-        for n in gl_pick:
-            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
-    else:
-        st.caption("조건에 맞는 핵심 이슈를 찾지 못했습니다.")
+        st.warning(
+            "AI 서술형 브리핑을 쓰려면 Anthropic API 키가 필요합니다. "
+            "Streamlit Cloud → Manage app → Settings → Secrets 에 아래처럼 추가해주세요:\n\n"
+            "`ANTHROPIC_API_KEY = \"sk-ant-...\"`"
+        )
+        if err and err != "API 키 없음":
+            st.caption(f"오류 상세: {err}")
+        st.markdown("---")
+        st.caption("임시로 헤드라인 목록을 대신 보여드립니다.")
+        for it in all_items[:10]:
+            st.markdown(f"- [{it['제목']}]({it['링크']}) <span class='src-note'>· {it['출처']}</span>", unsafe_allow_html=True)
 
 
 def page_news_domestic():
-    subtitle("국내 뉴스 (연합뉴스·매일경제·한국경제·서울경제·이데일리)")
+    subtitle("국내 최신 뉴스 (연합뉴스·매일경제·한국경제·서울경제·이데일리)")
     items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=5)
     for n in items:
         st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
 
 
 def page_news_global():
-    subtitle("해외 뉴스 (Reuters Business)")
+    subtitle("해외 최신 뉴스 (Reuters Business)")
     items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=10)
     for n in items:
         st.markdown(f"- [{n['제목']}]({n['링크']})  \n  <span class='src-note'>{n['출처']} · {n['시간']}</span>", unsafe_allow_html=True)
 
 
+def render_research_list(list_path, source_label):
+    items = get_naver_research(list_path, limit=15)
+    if not items:
+        st.caption("현재 불러온 항목이 없습니다.")
+        return
+    for it in items:
+        st.markdown(
+            f"- [{it['제목']}]({it['링크']})  \n  <span class='src-note'>{it['증권사']} · {it['날짜']}</span>",
+            unsafe_allow_html=True
+        )
+    st.caption(f"출처: 네이버금융 리서치 · {source_label} (증권사 애널리스트 리포트 모음)")
+
+
 def page_research_general():
-    subtitle("리서치 · 종합")
-    items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=6)
-    for n in items[:12]:
-        st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
-    st.caption("※ 임시로 종합경제지 헤드라인을 그대로 노출 중입니다. 증권사 리서치센터 리포트 연동은 다음 단계 협의 후 진행합니다.")
+    subtitle("리서치 · 종합 (시황정보)")
+    render_research_list("market_info_list.naver", "시황정보")
 
 
 def page_research_company():
-    subtitle("리서치 · 기업분석")
-    items = filter_by_keywords(get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=8),
-                                ["실적", "목표주가", "영업이익", "순이익", "리포트", "매수", "매도"])
-    if items:
-        for n in items[:12]:
-            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
-    else:
-        st.caption("현재 조건에 맞는 기사가 없습니다.")
-    st.caption("※ 키워드 기반 임시 필터입니다.")
+    subtitle("리서치 · 기업분석 (종목분석)")
+    render_research_list("company_list.naver", "종목분석")
 
 
 def page_research_industry():
     subtitle("리서치 · 산업분석")
-    items = filter_by_keywords(get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=8),
-                                ["업황", "산업", "공급망", "규제", "수주", "생산"])
-    if items:
-        for n in items[:12]:
-            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
-    else:
-        st.caption("현재 조건에 맞는 기사가 없습니다.")
-    st.caption("※ 키워드 기반 임시 필터입니다.")
+    render_research_list("industry_list.naver", "산업분석")
 
 
 def page_research_strategy():
-    subtitle("리서치 · 투자전략")
-    items = filter_by_keywords(get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=8),
-                                ["증시", "전망", "금리", "환율", "투자전략", "포트폴리오", "자산배분"])
-    if items:
-        for n in items[:12]:
-            st.markdown(f"- [{n['제목']}]({n['링크']}) <span class='src-note'>· {n['출처']}</span>", unsafe_allow_html=True)
-    else:
-        st.caption("현재 조건에 맞는 기사가 없습니다.")
-    st.caption("※ 키워드 기반 임시 필터입니다.")
+    subtitle("리서치 · 투자전략 (투자정보)")
+    render_research_list("invest_list.naver", "투자정보")
 
 
 def page_index_kr():
@@ -320,10 +369,10 @@ def page_policy_kr():
 # 여기에 항목만 추가하면 메뉴가 늘어남
 # ─────────────────────────────────────────────
 MENU = {
-    "🗞️ 뉴스브리핑": {
-        "오늘의 브리핑": page_briefing,
+    "🗞️ 브리핑": {
+        "브리핑": page_briefing,
     },
-    "📡 뉴스": {
+    "📡 최신 뉴스": {
         "국내 뉴스": page_news_domestic,
         "해외 뉴스": page_news_global,
     },
