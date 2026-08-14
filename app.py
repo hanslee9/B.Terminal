@@ -913,6 +913,32 @@ def render_investor_table(trend):
     st.markdown(html, unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=60)
+def debug_dump_table(url, max_rows=6):
+    """진단용: 테이블의 각 행을 셀 텍스트 리스트 그대로 반환 (구조 파악용)"""
+    from bs4 import BeautifulSoup
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    try:
+        r = requests.get(url, headers=headers, timeout=6)
+        r.encoding = "euc-kr"
+        soup = BeautifulSoup(r.text, "html.parser")
+        tables = soup.select("table")
+        out = []
+        for ti, table in enumerate(tables):
+            cls = table.get("class", [])
+            row_dump = []
+            for tr in table.select("tr")[:max_rows]:
+                cells = tr.find_all(["th", "td"])
+                texts = [c.get_text(strip=True) for c in cells]
+                if any(texts):
+                    row_dump.append(texts)
+            if row_dump:
+                out.append({"table_index": ti, "class": cls, "rows": row_dump})
+        return out
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
 def page_index_kr():
     subtitle("국내 지수")
     df = get_kr_indices()
@@ -949,6 +975,14 @@ def page_index_kr():
     else:
         st.caption("업종별 시세를 불러오지 못했습니다.")
     st.caption("출처: 네이버금융 업종별시세")
+
+    st.markdown("---")
+    if st.checkbox("🔧 진단모드 (원본 데이터 구조 보기)", key="idx_debug"):
+        st.caption("아래 내용을 캡처해서 보내주시면 정확한 컬럼 구조로 고칠 수 있습니다.")
+        st.markdown("**업종별시세 원본**")
+        st.json(debug_dump_table("https://finance.naver.com/sise/sise_group.naver?type=upjong", max_rows=5))
+        st.markdown("**수급현황(코스피) 원본**")
+        st.json(debug_dump_table("https://finance.naver.com/sise/investorDealTrendDay.naver?sosok=0&page=1", max_rows=6))
 
 
 def page_index_us():
