@@ -189,8 +189,10 @@ def get_naver_investor_trend(sosok):
     투자자별(외국인/기관/개인) 순매수 동향 (억원) — 당일/주간누계/월간누계.
     sosok: '0'=코스피, '1'=코스닥
     ※ data.krx.co.kr는 2024-12부터 로그인 없이는 차단되어(전업계 공통 이슈),
-      대신 stock.naver.com의 비공식 공개 API(로그인/쿠키 불필요, 오픈소스에서 검증됨)를 사용합니다.
-      정확한 응답 필드명은 배포 후 진단모드로 확인이 필요할 수 있습니다.
+      대신 stock.naver.com의 비공식 공개 API(로그인/쿠키 불필요)를 사용합니다.
+      investorGubun 코드는 실제 응답으로 검증 완료:
+        8000=개인, 9000+9001=외국인(+기타외국인), 나머지(1000~7100)=기관
+        (하루 합계가 0에 수렴하는 것으로 매핑 정확성 확인됨)
     """
     market_type = "KOSPI" if str(sosok) == "0" else "KOSDAQ"
     headers = {
@@ -211,35 +213,45 @@ def get_naver_investor_trend(sosok):
         }
         r = requests.get(url, headers=headers, params=params, timeout=8)
         data = r.json()
-        items = data if isinstance(data, list) else data.get("items", data.get("result", []))
-        if not items:
+        content = data.get("content", [])
+        if not content:
             return None
 
-        def get_val(d, *keys):
-            for k in keys:
-                if k in d:
-                    v = d[k]
-                    try:
-                        return int(str(v).replace(",", ""))
-                    except (ValueError, TypeError):
-                        pass
-            return 0
+        def parse_int(v):
+            try:
+                return int(str(v).replace(",", ""))
+            except (ValueError, TypeError):
+                return 0
 
         rows = []
-        for it in items:
-            date_txt = str(it.get("bizdate", it.get("date", it.get("localDate", ""))))
-            if not date_txt:
+        for day in content:
+            date_raw = str(day.get("bizdate", ""))
+            if not date_raw or len(date_raw) != 8:
                 continue
+            date_txt = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:]}"
+
+            individual = foreigner = institution = 0
+            for na in day.get("netAmounts", []):
+                code = str(na.get("investorGubun", ""))
+                val = parse_int(na.get("diffValue", 0))
+                if code == "8000":
+                    individual += val
+                elif code in ("9000", "9001"):
+                    foreigner += val
+                else:
+                    institution += val
+
             rows.append({
                 "날짜": date_txt,
-                "개인": get_val(it, "individualNetBuy", "individual", "personal") // 100_000_000,
-                "외국인": get_val(it, "foreignerNetBuy", "foreigner", "foreign") // 100_000_000,
-                "기관": get_val(it, "institutionNetBuy", "institution", "organ") // 100_000_000,
+                "개인": individual // 100_000_000,
+                "외국인": foreigner // 100_000_000,
+                "기관": institution // 100_000_000,
             })
 
         if not rows:
             return None
 
+        rows.sort(key=lambda x: x["날짜"], reverse=True)  # 최신 날짜 먼저
         latest = rows[0]
         week_rows = rows[:5]
         month_rows = rows[:20]
