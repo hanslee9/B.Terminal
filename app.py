@@ -186,62 +186,43 @@ def fmt_num(n, unit=""):
 @st.cache_data(ttl=300)
 def get_naver_investor_trend(sosok):
     """
-    투자자별(외국인/기관/개인) 순매수 동향 (억원) — 당일(또는 최근 집계일)/주간누계/월간누계.
+    투자자별(외국인/기관/개인) 순매수 동향 (억원) — 당일/주간누계/월간누계.
     sosok: '0'=코스피, '1'=코스닥
-    데이터 행은 [날짜, 개인 매도, 매수, 순매매, 외국인 매도, 매수, 순매매, 기관 매도, 매수, 순매매, ...]
-    형태의 고정 컬럼 구조를 가정 (헤더는 그룹 colspan이라 헤더 텍스트 매칭 대신 고정 위치 사용).
+    ※ 네이버 페이지는 데이터가 자바스크립트로 채워져 정적 스크래핑이 불가해,
+      한국거래소(KRX) 공식 데이터를 쓰는 pykrx 라이브러리로 조회합니다.
     """
-    from bs4 import BeautifulSoup
-    import re as _re
-
-    def fetch_rows(page):
-        url = f"https://finance.naver.com/sise/investorDealTrendDay.naver?sosok={sosok}&page={page}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        r = requests.get(url, headers=headers, timeout=6)
-        r.encoding = "euc-kr"
-        soup = BeautifulSoup(r.text, "html.parser")
-        table = soup.select_one("table.type_1")
-        if not table:
-            return []
-        out = []
-        for tr in table.select("tr"):
-            tds = tr.find_all("td")
-            if len(tds) < 10:
-                continue
-            date_txt = tds[0].get_text(strip=True)
-            if not _re.match(r"\d{4}[.\-]\d{2}[.\-]\d{2}", date_txt):
-                continue
-            out.append(tds)
-        return out
-
-    def parse_num(s):
-        s = s.replace(",", "").replace("+", "").strip()
-        try:
-            return int(s)
-        except ValueError:
-            return 0
+    from pykrx import stock as pykrx_stock
+    market = "KOSPI" if str(sosok) == "0" else "KOSDAQ"
 
     try:
-        rows_html = fetch_rows(1) + fetch_rows(2)
-        if not rows_html:
+        today = datetime.now()
+        fromdate = (today - pd.Timedelta(days=40)).strftime("%Y%m%d")
+        todate = today.strftime("%Y%m%d")
+        df = pykrx_stock.get_market_trading_value_by_date(fromdate, todate, market, on="순매수")
+        if df is None or df.empty:
             return None
 
-        all_rows = []
-        for tds in rows_html:
-            date_txt = tds[0].get_text(strip=True)
-            all_rows.append({
-                "날짜": date_txt,
-                "개인": parse_num(tds[3].get_text(strip=True)),
-                "외국인": parse_num(tds[6].get_text(strip=True)),
-                "기관": parse_num(tds[9].get_text(strip=True)),
+        df = df.sort_index(ascending=False)  # 최신 날짜 먼저
+        df = (df / 100_000_000).round(0).astype(int)  # 원 → 억원
+
+        rows = []
+        for date, row in df.iterrows():
+            rows.append({
+                "날짜": date.strftime("%Y-%m-%d"),
+                "개인": int(row["개인"]),
+                "외국인": int(row["외국인합계"]),
+                "기관": int(row["기관합계"]),
             })
 
-        latest = all_rows[0]
-        week_rows = all_rows[:5]
-        month_rows = all_rows[:20]
+        if not rows:
+            return None
 
-        def sum_col(rows, col):
-            return sum(r[col] for r in rows)
+        latest = rows[0]
+        week_rows = rows[:5]
+        month_rows = rows[:20]
+
+        def sum_col(rs, col):
+            return sum(r[col] for r in rs)
 
         return {
             "당일": latest,
@@ -255,12 +236,10 @@ def get_naver_investor_trend(sosok):
 @st.cache_data(ttl=300)
 def get_naver_sector_list(limit=15):
     """
-    업종별(섹터) 등락률 상위 목록.
-    헤더 컬럼 위치 대신, 각 데이터 행에서 '등락률(%)' 패턴과 '거래량(정수, 콤마)' 패턴을
-    정규식으로 직접 찾아내는 방식 — 헤더가 병합(colspan)되어 있어도 영향받지 않습니다.
+    업종별(섹터) 등락률 + 상승/보합/하락 종목수.
+    실제 확인된 컬럼 구조: [업종명, 등락률(%), 전체종목수, 상승, 보합, 하락, 등락그래프(%)]
     """
     from bs4 import BeautifulSoup
-    import re as _re
     url = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
@@ -279,26 +258,15 @@ def get_naver_sector_list(limit=15):
             name = name_a.get_text(strip=True)
             tds = tr.find_all("td")
             cell_texts = [td.get_text(strip=True) for td in tds]
-
-            chg_text = "-"
-            for t in cell_texts:
-                m = _re.search(r"[+\-]?\d+\.\d+\s*%", t)
-                if m:
-                    chg_text = m.group(0).replace(" ", "")
-                    break
-
-            vol_text = "-"
-            best = None
-            for t in cell_texts:
-                m = _re.fullmatch(r"[+\-]?[\d,]+", t)
-                if m and "," in t:
-                    num = int(t.replace(",", "").replace("+", ""))
-                    if best is None or num > best:
-                        best = num
-            if best is not None:
-                vol_text = f"{best:,}"
-
-            rows.append({"업종": name, "등락률(%)": chg_text, "거래량(주)": vol_text})
+            if len(cell_texts) < 6:
+                continue
+            rows.append({
+                "업종": name,
+                "등락률(%)": cell_texts[1],
+                "상승": cell_texts[3],
+                "보합": cell_texts[4],
+                "하락": cell_texts[5],
+            })
             if len(rows) >= limit:
                 break
         return rows
