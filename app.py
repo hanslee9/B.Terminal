@@ -1465,7 +1465,6 @@ def _render_stock_info_section(country_label, default_hint, key_prefix):
         st.session_state[input_key] = ""
 
     q = st.text_input(f"티커 입력 ({default_hint})", key=input_key)
-    render_ticker_search_helper(key_prefix, input_key)
 
     if q:
         data = get_stock_fundamentals(q)
@@ -1505,7 +1504,7 @@ def page_stock_info():
     _render_stock_info_section("🇺🇸 미국", "예: AAPL, TSLA, NVDA", "us_stock")
     st.markdown("---")
     _render_stock_info_section("🇰🇷 한국", "예: 005930.KS, SK하이닉스, 삼성전자", "kr_stock")
-    st.caption("출처: Yahoo Finance(yfinance) · 정확한 티커를 모르면 종목명으로 검색하거나 위 도우미를 이용하세요")
+    st.caption("출처: Yahoo Finance(yfinance) · 정확한 티커를 모르면 종목명(한글/영문)을 그대로 입력하세요 (자동 인식)")
 
 
 def page_policy_us():
@@ -1592,26 +1591,26 @@ def render_ai_chat_panel():
 # 여기에 항목만 추가하면 메뉴가 늘어남
 # ─────────────────────────────────────────────
 MENU = {
-    "🗞️ 브리핑": {
+    "브리핑": {
         "브리핑": page_briefing,
     },
-    "📡 최신 뉴스": {
+    "최신 뉴스": {
         "국내 뉴스": page_news_domestic,
         "해외 뉴스": page_news_global,
     },
-    "🔎 리서치": {
+    "리서치": {
         "종합": page_research_general,
         "기업분석": page_research_company,
         "산업분석": page_research_industry,
         "투자전략": page_research_strategy,
     },
-    "📈 실시간 시황": {
+    "실시간 시황": {
         "국내지수 및 업종": page_index_kr,
         "해외지수 및 업종": page_index_us,
         "환율": page_fx,
         "종목 정보": page_stock_info,
     },
-    "🏛️ 정책/일정": {
+    "주요 일정": {
         "미국": page_policy_us,
         "한국": page_policy_kr,
     },
@@ -1621,7 +1620,7 @@ MENU = {
 # 사이드바 렌더 + 라우팅 (대분류를 폴더처럼 펼쳐서 하위 항목 클릭)
 # ─────────────────────────────────────────────
 if "page" not in st.session_state:
-    st.session_state.page = ("🗞️ 브리핑", "브리핑")
+    st.session_state.page = ("브리핑", "브리핑")
 
 for major, minors in MENU.items():
     is_current_group = st.session_state.page[0] == major
@@ -1647,8 +1646,7 @@ with col_main:
         major = list(MENU.keys())[0]
         minor = list(MENU[major].keys())[0]
         st.session_state.page = (major, minor)
-    major_text = major.split(" ", 1)[-1] if " " in major else major  # 이모지 제거한 순수 텍스트
-    title = major if minor == major_text else f"{major} · {minor}"
+    title = major if minor == major else f"{major} · {minor}"
     st.markdown(f"<div class='page-title'>{title}</div>", unsafe_allow_html=True)
     MENU[major][minor]()
 
