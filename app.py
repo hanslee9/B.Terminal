@@ -240,11 +240,12 @@ def fmt_num(n, unit=""):
     return f"<span style='color:{color};'>{sign}{n:,.0f}{unit}</span>"
 
 
-def style_negatives_red(df, fmt_map):
+def style_negatives_red(df, fmt_map, bold_rows=None):
     """
     st.dataframe에 넘길 pandas Styler 생성.
     fmt_map: {컬럼명: '{:,.2f}' 같은 포맷 문자열} — 지정된 컬럼에 콤마/소수점 서식 적용,
     값이 음수면 '-' 기호 포함해서 빨간색으로 표시.
+    bold_rows: 굵은체로 표시할 행 인덱스(0부터) 리스트
     """
     def _color_neg(val):
         try:
@@ -260,6 +261,8 @@ def style_negatives_red(df, fmt_map):
     except AttributeError:
         sty = sty.applymap(_color_neg, subset=list(fmt_map.keys()))
     sty = sty.format(fmt_map, na_rep="-")
+    if bold_rows:
+        sty = sty.set_properties(subset=pd.IndexSlice[bold_rows, :], **{"font-weight": "bold"})
     return sty
 
 
@@ -403,13 +406,20 @@ def get_fx():
     환율 (frankfurter.app - 무료, 키 불필요, ECB 기준)
     라벨은 'KRW/USD' 형태(1달러당 해당 통화)로 표시. 모든 통화 동일한 방식(역수 없음).
     전일/전월/전년 대비 등락률(%) 포함.
+    - 오늘: 가장 최근 데이터
+    - 전일: 1일 전
+    - 전월: 달력 기준 30일 전
+    - 전년: 달력 기준 365일 전
+    (frankfurter.app은 주말·공휴일처럼 데이터가 없는 날짜를 요청하면 자동으로
+     직전 영업일 데이터를 반환합니다 — 정밀한 값이 필요한 게 아니라 별도 보정 없이 사용)
     """
+    CURRENCY_ORDER = ["KRW", "JPY", "EUR", "CNY", "GBP"]
     today = datetime.now()
     date_points = {
         "오늘": today,
         "전일": today - pd.Timedelta(days=1),
-        "전월": today - pd.DateOffset(months=1),
-        "전년": today - pd.DateOffset(years=1),
+        "전월": today - pd.Timedelta(days=30),
+        "전년": today - pd.Timedelta(days=365),
     }
     try:
         rates_by_period = {}
@@ -421,7 +431,10 @@ def get_fx():
 
         today_rates = rates_by_period["오늘"]
         rows = []
-        for code, val in today_rates.items():
+        for code in CURRENCY_ORDER:
+            val = today_rates.get(code)
+            if val is None:
+                continue
             row = {"통화쌍": f"{code}/USD", "환율": round(val, 4)}
             for period in ("전일", "전월", "전년"):
                 prev = rates_by_period[period].get(code)
@@ -1190,13 +1203,14 @@ def page_index_us():
 def page_fx():
     subtitle("환율")
     df = get_fx()
+    krw_row_idx = df.index[df["통화쌍"] == "KRW/USD"].tolist()
     st.dataframe(
         style_negatives_red(df, {
             "환율": "{:,.2f}",
             "전일대비(%)": "{:,.2f}",
             "전월대비(%)": "{:,.2f}",
             "전년대비(%)": "{:,.2f}",
-        }),
+        }, bold_rows=krw_row_idx),
         use_container_width=True,
         hide_index=True,
     )
