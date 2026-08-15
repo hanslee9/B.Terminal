@@ -754,9 +754,165 @@ def search_stock(query):
         return {"error": str(e)}
 
 
-# ─────────────────────────────────────────────
-# 화면(중분류)별 렌더 함수
-# ─────────────────────────────────────────────
+@st.cache_data(ttl=3600)
+def search_ticker_candidates(query, count=6):
+    """종목명으로 후보 목록 검색 (티커 모를 때 도우미용). 무료, 키 불필요.
+    반환: [{"ticker":..., "name":..., "exchange":...}, ...]"""
+    try:
+        r = requests.get(
+            "https://query1.finance.yahoo.com/v1/finance/search",
+            params={"q": query, "quotesCount": count, "newsCount": 0},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=5
+        )
+        data = r.json()
+        results = []
+        for q in data.get("quotes", []):
+            if q.get("quoteType") == "EQUITY" and q.get("symbol"):
+                results.append({
+                    "ticker": q["symbol"],
+                    "name": q.get("longname") or q.get("shortname") or q["symbol"],
+                    "exchange": q.get("exchange", ""),
+                })
+        return results
+    except Exception:
+        return []
+
+
+def render_ticker_search_helper(key_prefix, target_input_key):
+    """티커를 모를 때 종목명으로 찾아서 클릭하면 메인 입력창에 채워주는 도우미 UI"""
+    with st.expander("🔍 티커를 모르시나요? 종목명으로 찾기"):
+        q = st.text_input("회사명 입력 (예: 애플, 삼성전자, Tesla)", key=f"{key_prefix}_helper_q")
+        if q:
+            candidates = search_ticker_candidates(q)
+            if candidates:
+                for c in candidates:
+                    label = f"{c['name']} ({c['ticker']}) · {c['exchange']}"
+                    if st.button(label, key=f"{key_prefix}_pick_{c['ticker']}"):
+                        st.session_state[target_input_key] = c["ticker"]
+                        st.rerun()
+            else:
+                st.caption("검색 결과가 없습니다.")
+
+
+@st.cache_data(ttl=300)
+def get_stock_fundamentals(ticker):
+    """
+    종목 핵심 재무지표 종합 조회 (yfinance).
+    한국 종목은 Yahoo의 재무데이터 커버리지가 미국보다 부실해서 일부 항목이 비어있을 수 있음(정상).
+    """
+    import yfinance as yf
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        if not info or (info.get("regularMarketPrice") is None and info.get("currentPrice") is None):
+            return None
+
+        price = info.get("currentPrice", info.get("regularMarketPrice"))
+        prev_close = info.get("previousClose")
+        chg = None
+        chg_pct = None
+        if price is not None and prev_close:
+            chg = price - prev_close
+            chg_pct = chg / prev_close * 100
+
+        # 영업이익 / 영업이익증가율 — .info에 없어서 손익계산서에서 직접 계산
+        op_income = None
+        op_income_growth = None
+        try:
+            inc = t.income_stmt
+            if inc is not None and not inc.empty:
+                op_row = next((lbl for lbl in inc.index if "Operating Income" in lbl), None)
+                if op_row is not None:
+                    series = inc.loc[op_row].dropna()
+                    if len(series) >= 1:
+                        op_income = float(series.iloc[0])
+                    if len(series) >= 2 and series.iloc[1] != 0:
+                        op_income_growth = (series.iloc[0] - series.iloc[1]) / abs(series.iloc[1]) * 100
+        except Exception:
+            pass
+
+        # FCF — .info 우선, 없으면 현금흐름표에서 계산 (영업현금흐름 - 자본적지출)
+        fcf = info.get("freeCashflow")
+        if fcf is None:
+            try:
+                cf = t.cashflow
+                if cf is not None and not cf.empty:
+                    ocf_row = next((lbl for lbl in cf.index if "Operating Cash Flow" in lbl), None)
+                    capex_row = next((lbl for lbl in cf.index if "Capital Expenditure" in lbl), None)
+                    if ocf_row is not None and capex_row is not None:
+                        ocf = cf.loc[ocf_row].dropna()
+                        capex = cf.loc[capex_row].dropna()
+                        if len(ocf) >= 1 and len(capex) >= 1:
+                            fcf = float(ocf.iloc[0]) + float(capex.iloc[0])  # capex는 보통 음수로 기록됨
+            except Exception:
+                pass
+
+        return {
+            "종목명": info.get("longName", ticker),
+            "시가총액": info.get("marketCap"),
+            "현재가": price,
+            "52주 최고": info.get("fiftyTwoWeekHigh"),
+            "52주 최저": info.get("fiftyTwoWeekLow"),
+            "전일비": chg,
+            "전일비(%)": chg_pct,
+            "매출액": info.get("totalRevenue"),
+            "매출증가율(%)": (info.get("revenueGrowth") * 100) if info.get("revenueGrowth") is not None else None,
+            "영업이익": op_income,
+            "영업이익률(%)": (info.get("operatingMargins") * 100) if info.get("operatingMargins") is not None else None,
+            "영업이익증가율(%)": op_income_growth,
+            "EPS": info.get("trailingEps"),
+            "PER": info.get("trailingPE"),
+            "PBR": info.get("priceToBook"),
+            "PEG": info.get("pegRatio"),
+            "베타": info.get("beta"),
+            "ROE(%)": (info.get("returnOnEquity") * 100) if info.get("returnOnEquity") is not None else None,
+            "부채비율(%)": info.get("debtToEquity"),
+            "배당수익률(%)": (info.get("dividendYield") * 100) if info.get("dividendYield") is not None else None,
+            "FCF": fcf,
+            "통화": info.get("currency", ""),
+        }
+    except Exception:
+        return None
+
+
+def render_fundamentals_table(data):
+    """get_stock_fundamentals() 결과를 콤마/퍼센트 서식 있는 표로 렌더"""
+    currency = data.get("통화", "")
+    money_fields = ["시가총액", "현재가", "52주 최고", "52주 최저", "전일비", "매출액", "영업이익", "FCF"]
+    pct_fields = ["전일비(%)", "매출증가율(%)", "영업이익률(%)", "영업이익증가율(%)",
+                  "ROE(%)", "부채비율(%)", "배당수익률(%)"]
+    ratio_fields = ["EPS", "PER", "PBR", "PEG", "베타"]
+
+    def fmt(key, val):
+        if val is None:
+            return "-"
+        if key in pct_fields:
+            sign = "+" if val > 0 else ""
+            return f"{sign}{val:,.2f}%"
+        if key in ratio_fields:
+            return f"{val:,.2f}"
+        if key in money_fields:
+            return f"{val:,.0f} {currency}".strip()
+        return str(val)
+
+    order = ["시가총액", "현재가", "52주 최고", "52주 최저", "전일비", "전일비(%)",
+             "매출액", "매출증가율(%)", "영업이익", "영업이익률(%)", "영업이익증가율(%)",
+             "EPS", "PER", "PBR", "PEG", "베타", "ROE(%)", "부채비율(%)", "배당수익률(%)", "FCF"]
+    rows = [{"지표": k, "값": fmt(k, data.get(k))} for k in order]
+
+    def color_neg(row):
+        raw = data.get(row["지표"])
+        try:
+            if raw is not None and float(raw) < 0:
+                return ["", "color:#c22;"]
+        except (TypeError, ValueError):
+            pass
+        return ["", ""]
+
+    sty = pd.DataFrame(rows).style.apply(color_neg, axis=1)
+    st.dataframe(sty, use_container_width=True, hide_index=True)
+
 
 def page_briefing():
     kr_items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=6)
@@ -1217,48 +1373,53 @@ def page_fx():
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: frankfurter.app (ECB 기준)")
 
 
-def page_stock_search():
-    subtitle("개별 종목 조회")
-    q = st.text_input("종목명 또는 티커 입력 (예: SK하이닉스, AAPL, 삼성전자)", "")
+def _render_stock_info_section(country_label, default_hint, key_prefix):
+    st.markdown(f"### {country_label}")
+    input_key = f"{key_prefix}_ticker_input"
+    if input_key not in st.session_state:
+        st.session_state[input_key] = ""
+
+    q = st.text_input(f"티커 입력 ({default_hint})", key=input_key)
+    render_ticker_search_helper(key_prefix, input_key)
+
     if q:
-        d = search_stock(q)
+        data = get_stock_fundamentals(q)
         resolved_note = None
 
-        if "error" in d:
-            # 1순위: 무료 야후파이낸스 검색 (키 불필요)
+        if data is None:
             resolved = resolve_ticker_free(q)
             if resolved:
-                d2 = search_stock(resolved["ticker"])
-                if "error" not in d2:
-                    d = d2
-                    resolved_note = f"'{q}' → **{resolved['name']} ({resolved['ticker']})** 로 자동 인식했습니다. (무료 검색)"
+                data2 = get_stock_fundamentals(resolved["ticker"])
+                if data2 is not None:
+                    data = data2
+                    resolved_note = f"'{q}' → **{resolved['name']} ({resolved['ticker']})** 로 자동 인식했습니다."
 
-        if "error" in d and get_anthropic_client() is not None:
-            # 2순위: 무료 검색도 실패했고 AI 키가 있으면 AI로 재시도
+        if data is None and get_anthropic_client() is not None:
             with st.spinner("AI로 정확한 티커 확인 중..."):
                 resolved = resolve_ticker_via_ai(q)
             if resolved:
-                d2 = search_stock(resolved["ticker"])
-                if "error" not in d2:
-                    d = d2
+                data2 = get_stock_fundamentals(resolved["ticker"])
+                if data2 is not None:
+                    data = data2
                     resolved_note = f"AI가 '{q}' → **{resolved['name']} ({resolved['ticker']})** 로 자동 인식했습니다."
 
-        if "error" in d:
+        if data is None:
             st.error(f"조회 실패: 종목을 찾지 못했습니다. (마지막 시도값: {q})")
         else:
             if resolved_note:
                 st.success(resolved_note)
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                st.metric(d["name"], d.get("price", "-"))
-                st.write(f"섹터: {d['sector']}")
-                mktcap = d.get("mktcap")
-                st.write(f"시가총액: {mktcap:,}" if mktcap else "시가총액: -")
-            with c2:
-                if d.get("hist") is not None and not d["hist"].empty:
-                    st.line_chart(d["hist"]["Close"])
-            st.write(d.get("summary", ""))
-    st.caption("출처: Yahoo Finance(yfinance) · 정확한 티커를 모르면 그냥 종목명을 입력하세요 (무료 자동 인식, API 키 불필요)")
+            st.markdown(f"**{data['종목명']} ({q})**")
+            render_fundamentals_table(data)
+            st.caption("일부 항목(특히 매출증가율/영업이익률/FCF)은 Yahoo Finance의 데이터 커버리지 한계로 "
+                       "종목에 따라 비어있을 수 있습니다.")
+
+
+def page_stock_info():
+    subtitle("종목 정보")
+    _render_stock_info_section("🇺🇸 미국", "예: AAPL, TSLA, NVDA", "us_stock")
+    st.markdown("---")
+    _render_stock_info_section("🇰🇷 한국", "예: 005930.KS, SK하이닉스, 삼성전자", "kr_stock")
+    st.caption("출처: Yahoo Finance(yfinance) · 정확한 티커를 모르면 종목명으로 검색하거나 위 도우미를 이용하세요")
 
 
 def page_policy_us():
@@ -1362,7 +1523,7 @@ MENU = {
         "국내지수 및 업종": page_index_kr,
         "해외지수 및 업종": page_index_us,
         "환율": page_fx,
-        "종목 조회": page_stock_search,
+        "종목 정보": page_stock_info,
     },
     "🏛️ 정책/일정": {
         "미국": page_policy_us,
