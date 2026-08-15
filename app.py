@@ -1325,6 +1325,11 @@ col_main, col_chat = st.columns([100 - chat_pct, chat_pct])
 with col_main:
     st.markdown("<div class='app-title'>📊 투자 정보 터미널</div>", unsafe_allow_html=True)
     major, minor = st.session_state.page
+    if major not in MENU or minor not in MENU[major]:
+        # 메뉴명이 바뀌어 세션에 남은 옛 값과 안 맞으면 기본값으로 복구
+        major = list(MENU.keys())[0]
+        minor = list(MENU[major].keys())[0]
+        st.session_state.page = (major, minor)
     major_text = major.split(" ", 1)[-1] if " " in major else major  # 이모지 제거한 순수 텍스트
     title = major if minor == major_text else f"{major} · {minor}"
     st.markdown(f"<div class='page-title'>{title}</div>", unsafe_allow_html=True)
