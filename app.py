@@ -1583,6 +1583,8 @@ def render_ai_economic_calendar():
     st.markdown(html, unsafe_allow_html=True)
     st.caption(f"AI 웹서치 조사 · {datetime.now().strftime('%Y-%m-%d %H:%M')} 기준 · "
                "오늘부터 3주간 · 참고용, 정확한 시간은 원문 확인 권장")
+    st.info("이 표는 간단 요약(대략적인 개요)입니다. 기업 실적발표·의사록 공개일 등까지 포함한 "
+            "상세한 일정이 필요하시면 별도의 AI 환경(claude.ai 등)에서 직접 조사를 요청해서 참조하시기 바랍니다.")
     return True
 
 
