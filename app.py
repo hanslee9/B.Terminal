@@ -1543,7 +1543,7 @@ def render_investing_calendar_widget(country_codes, height=480, importance="3"):
         "features=datepicker&"
         f"countries={country_codes}&"
         f"importance={importance}&"
-        "calType=week"
+        "calType=nextWeek"
     )
     st.components.v1.iframe(src, height=height, scrolling=True)
     st.caption("실시간 위젯 제공: Investing.com (공식 무료 임베드) · 중요도 '높음'만 표시 · "
