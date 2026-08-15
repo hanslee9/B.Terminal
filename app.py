@@ -999,6 +999,60 @@ def render_fundamentals_table(data):
     st.dataframe(sty, use_container_width=True, hide_index=True)
 
 
+def render_export_box(lines):
+    """현재 페이지(좌측 메뉴 대분류·중분류) 제목 + 지정된 텍스트를 파일 다운로드/복사로 제공.
+    다운로드한 파일을 다른 Claude 채팅창에 첨부해서 종합 브리핑 등을 요청할 때 쓰는 용도."""
+    major, minor = st.session_state.get("page", ("", ""))
+    page_title = major if minor == major else f"{major} · {minor}"
+    now = datetime.now()
+    header = f"[{page_title}] {now.strftime('%Y-%m-%d %H:%M')} 기준\n" + "=" * 40 + "\n\n"
+    text = header + "\n".join(lines)
+    file_name = f"{page_title.replace(' ', '_').replace('/', '-')}_{now.strftime('%Y%m%d_%H%M')}.txt"
+
+    with st.expander("📋 텍스트로 내보내기 (파일 다운로드해서 다른 Claude 창에 첨부하기)"):
+        st.download_button(
+            "⬇️ 파일로 다운로드",
+            data=text,
+            file_name=file_name,
+            mime="text/plain",
+            key=f"download_{page_title}",
+            use_container_width=True,
+        )
+        st.caption("다운로드한 파일을 새 Claude.ai 채팅창에 첨부(업로드)하고 '브리핑 리포트로 정리해줘'라고 요청하세요.")
+        with st.expander("또는 텍스트 직접 복사"):
+            st.text_area("전체 선택(Ctrl+A) 후 복사하세요", value=text, height=280, key=f"export_{page_title}")
+
+
+BRIEFING_CATEGORIES = {
+    "증권사": [
+        ("삼성증권", "https://www.samsungpop.com/v2/today-invest"),
+        ("미래에셋증권", "https://securities.miraeasset.com/bbs/board/message/list.do?categoryId=1521"),
+        ("한국투자증권", "https://securities.koreainvestment.com/main/research/research/Search.jsp"),
+        ("DS투자증권", "https://www.ds-sec.co.kr/bbs/board.php?bo_table=sub03_03"),
+        ("유안타증권", "https://www.myasset.com/myasset/research/RS_0000000_M.cmd"),
+    ],
+    "공공 정책기관": [
+        ("한국은행 - 일일 금융시장 동향", "https://www.bok.or.kr/portal/bbs/B0000348/list.do?menuNo=201109"),
+        ("국제금융센터 (KCIF)", "https://www.kcif.or.kr/annual/newsflashList"),
+        ("자본시장연구원 (KCMI)", "https://www.kcmi.re.kr/publications"),
+    ],
+    "기타, 민영 기업/연구소": [
+        ("하나금융연구소", "https://www.hanaif.re.kr/"),
+        ("KB경영연구소", "https://www.kbfg.com/kbresearch/report/reportList.do"),
+        ("LG경영연구원", "https://www.lgbr.co.kr/business/list.do"),
+        ("우리금융경영연구소", "https://www.wfri.re.kr/"),
+    ],
+    "포털 / 해외": [
+        ("네이버 금융", "https://finance.naver.com/research/"),
+        ("야후파이낸스", "https://finance.yahoo.com"),
+        ("Axios Markets", "https://www.axios.com/newsletters/axios-markets"),
+        ("Morning Brew", "https://www.morningbrew.com/daily"),
+        ("Seeking Alpha - Wall Street Breakfast", "https://seekingalpha.com/market-news/wall-street-breakfast"),
+        ("The Daily Upside", "https://www.thedailyupside.com"),
+    ],
+}
+
+
 def page_briefing():
     kr_items = get_multi_rss(FEEDS_DOMESTIC, limit_per_feed=6)
     gl_items = get_multi_rss(FEEDS_GLOBAL, limit_per_feed=6)
@@ -1015,34 +1069,23 @@ def page_briefing():
     st.caption("모두 문서(텍스트/PDF) 형태로 발행하는 곳만 정리했습니다. 유튜브 등 영상 위주 채널은 제외했습니다. "
                "기관명을 클릭하면 해당 페이지로 바로 이동합니다.")
 
-    render_category_lists({
-        "증권사": [
-            ("삼성증권", "https://www.samsungpop.com/v2/today-invest"),
-            ("미래에셋증권", "https://securities.miraeasset.com/bbs/board/message/list.do?categoryId=1521"),
-            ("한국투자증권", "https://securities.koreainvestment.com/main/research/research/Search.jsp"),
-            ("DS투자증권", "https://www.ds-sec.co.kr/bbs/board.php?bo_table=sub03_03"),
-            ("유안타증권", "https://www.myasset.com/myasset/research/RS_0000000_M.cmd"),
-        ],
-        "공공 정책기관": [
-            ("한국은행 - 일일 금융시장 동향", "https://www.bok.or.kr/portal/bbs/B0000348/list.do?menuNo=201109"),
-            ("국제금융센터 (KCIF)", "https://www.kcif.or.kr/annual/newsflashList"),
-            ("자본시장연구원 (KCMI)", "https://www.kcmi.re.kr/publications"),
-        ],
-        "기타, 민영 기업/연구소": [
-            ("하나금융연구소", "https://www.hanaif.re.kr/"),
-            ("KB경영연구소", "https://www.kbfg.com/kbresearch/report/reportList.do"),
-            ("LG경영연구원", "https://www.lgbr.co.kr/business/list.do"),
-            ("우리금융경영연구소", "https://www.wfri.re.kr/"),
-        ],
-        "포털 / 해외": [
-            ("네이버 금융", "https://finance.naver.com/research/"),
-            ("야후파이낸스", "https://finance.yahoo.com"),
-            ("Axios Markets", "https://www.axios.com/newsletters/axios-markets"),
-            ("Morning Brew", "https://www.morningbrew.com/daily"),
-            ("Seeking Alpha - Wall Street Breakfast", "https://seekingalpha.com/market-news/wall-street-breakfast"),
-            ("The Daily Upside", "https://www.thedailyupside.com"),
-        ],
-    })
+    render_category_lists(BRIEFING_CATEGORIES)
+
+    export_lines = []
+    if text:
+        export_lines.append("[AI 생성 브리핑]")
+        export_lines.append(text)
+        export_lines.append("")
+    export_lines.append("[오늘의 헤드라인]")
+    for it in all_items:
+        export_lines.append(f"- [{it['출처']}] {it['제목']} ({it['링크']})")
+    export_lines.append("")
+    for cat, items in BRIEFING_CATEGORIES.items():
+        export_lines.append(f"[{cat}]")
+        for name, url in items:
+            export_lines.append(f"- {name}: {url}")
+        export_lines.append("")
+    render_export_box(export_lines)
 
 
 def page_news_domestic():
