@@ -779,20 +779,47 @@ def search_ticker_candidates(query, count=6):
         return []
 
 
+@st.cache_data(ttl=3600)
+def ai_search_candidates(query):
+    """무료 검색이 실패했을 때(한글 번역명, 별명 등) AI로 후보를 찾는 폴백 — API 키 필요"""
+    system = (
+        "당신은 증권 티커 검색 도우미입니다. 사용자가 입력한 회사명(한글 번역명, 약칭, 별명 포함)에 "
+        "해당하는 실제 상장 종목을 찾아 Yahoo Finance 티커와 함께 오직 JSON 배열로만 답하세요. 최대 5개까지. "
+        "형식: [{\"ticker\":\"AAPL\",\"name\":\"Apple Inc.\",\"exchange\":\"NASDAQ\"}]. "
+        "한국 종목은 .KS(코스피) 또는 .KQ(코스닥) 접미사를 반드시 붙이세요. 찾지 못하면 빈 배열 []을 반환하세요."
+    )
+    prompt = f"'{query}'에 해당하는 상장 종목을 찾아줘."
+    data, err = ask_ai(prompt, system_prompt=system, want_json=True, max_tokens=500)
+    return data if isinstance(data, list) else []
+
+
 def render_ticker_search_helper(key_prefix, target_input_key):
-    """티커를 모를 때 종목명으로 찾아서 클릭하면 메인 입력창에 채워주는 도우미 UI"""
+    """티커를 모를 때 종목명으로 찾아서 클릭하면 메인 입력창에 채워주는 도우미 UI.
+    1순위: 무료 야후 검색(영문/정확한 명칭에 강함) → 실패 시 2순위: AI 검색(한글 번역명·별명 대응, 키 필요)"""
     with st.expander("🔍 티커를 모르시나요? 종목명으로 찾기"):
-        q = st.text_input("회사명 입력 (예: 애플, 삼성전자, Tesla)", key=f"{key_prefix}_helper_q")
+        q = st.text_input("회사명 입력 (예: 애플, 삼성전자, Tesla, 하이닉스)", key=f"{key_prefix}_helper_q")
         if q:
             candidates = search_ticker_candidates(q)
+            source_note = None
+            if not candidates and get_anthropic_client() is not None:
+                with st.spinner("AI로 검색 중..."):
+                    candidates = ai_search_candidates(q)
+                    if candidates:
+                        source_note = "AI 검색 결과 (한글 번역명·별명 대응)"
+
             if candidates:
+                if source_note:
+                    st.caption(source_note)
                 for c in candidates:
-                    label = f"{c['name']} ({c['ticker']}) · {c['exchange']}"
+                    label = f"{c['name']} ({c['ticker']}) · {c.get('exchange', '')}"
                     if st.button(label, key=f"{key_prefix}_pick_{c['ticker']}"):
                         st.session_state[target_input_key] = c["ticker"]
                         st.rerun()
             else:
-                st.caption("검색 결과가 없습니다.")
+                msg = "검색 결과가 없습니다."
+                if get_anthropic_client() is None:
+                    msg += " (정확한 영문명/한글 정식명이면 더 잘 찾습니다. AI 검색은 API 키가 있으면 별명도 찾아줍니다.)"
+                st.caption(msg)
 
 
 @st.cache_data(ttl=300)
@@ -848,6 +875,28 @@ def get_stock_fundamentals(ticker):
             except Exception:
                 pass
 
+        # EPS / PER / PBR — trailing 값이 없으면 forward 값으로, PBR은 bookValue로 폴백
+        eps = info.get("trailingEps")
+        if eps is None:
+            eps = info.get("forwardEps")
+
+        per = info.get("trailingPE")
+        if per is None:
+            per = info.get("forwardPE")
+        if per is None and eps and price:
+            per = price / eps  # 최후 수단: 직접 계산
+
+        pbr = info.get("priceToBook")
+        if pbr is None:
+            book_value = info.get("bookValue")
+            if book_value and price:
+                pbr = price / book_value  # 최후 수단: 현재가 / 주당순자산
+
+        # 배당수익률 — yfinance의 dividendYield 필드는 버전에 따라 값이 불안정해서
+        # 배당금(dividendRate, 주당 연간 배당금) / 현재가로 직접 계산 (더 신뢰도 높음)
+        dividend_rate = info.get("dividendRate")
+        div_yield = (dividend_rate / price * 100) if (dividend_rate and price) else None
+
         return {
             "종목명": info.get("longName", ticker),
             "시가총액": info.get("marketCap"),
@@ -861,14 +910,14 @@ def get_stock_fundamentals(ticker):
             "영업이익": op_income,
             "영업이익률(%)": (info.get("operatingMargins") * 100) if info.get("operatingMargins") is not None else None,
             "영업이익증가율(%)": op_income_growth,
-            "EPS": info.get("trailingEps"),
-            "PER": info.get("trailingPE"),
-            "PBR": info.get("priceToBook"),
+            "EPS": eps,
+            "PER": per,
+            "PBR": pbr,
             "PEG": info.get("pegRatio"),
             "베타": info.get("beta"),
             "ROE(%)": (info.get("returnOnEquity") * 100) if info.get("returnOnEquity") is not None else None,
             "부채비율(%)": info.get("debtToEquity"),
-            "배당수익률(%)": (info.get("dividendYield") * 100) if info.get("dividendYield") is not None else None,
+            "배당수익률(%)": div_yield,
             "FCF": fcf,
             "통화": info.get("currency", ""),
         }
@@ -1411,7 +1460,8 @@ def _render_stock_info_section(country_label, default_hint, key_prefix):
             st.markdown(f"**{data['종목명']} ({q})**")
             render_fundamentals_table(data)
             st.caption("일부 항목(특히 매출증가율/영업이익률/FCF)은 Yahoo Finance의 데이터 커버리지 한계로 "
-                       "종목에 따라 비어있을 수 있습니다.")
+                       "종목에 따라 비어있을 수 있습니다. PEG는 Yahoo가 자체 계산한 값이라 가끔 실제와 "
+                       "차이가 날 수 있으니 참고용으로만 보시는 걸 권장드립니다.")
 
 
 def page_stock_info():
