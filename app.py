@@ -1530,17 +1530,22 @@ POLICY_EVENTS_KR_2026 = [
 ]
 
 
-def render_investing_calendar_widget(country_codes, height=480):
-    """Investing.com 공식 무료 임베드 경제캘린더 위젯 (스크래핑 아님, 정식 iframe)"""
+def render_investing_calendar_widget(country_codes, height=480, importance="3"):
+    """Investing.com 공식 무료 임베드 경제캘린더 위젯 (스크래핑 아님, 정식 iframe).
+    importance='3'은 '높음'(별3개)만 필터 — 위젯 생성기에도 있는 공식 지원 파라미터.
+    columns는 국기/통화만 남겨서 시간·국가·이벤트 위주로 간결하게 표시
+    (라벨 텍스트나 레이아웃 자체는 다른 도메인 콘텐츠라 커스터마이징 불가)."""
     src = (
         "https://sslecal2.investing.com?"
-        "columns=exc_flags,exc_currency,exc_importance,exc_actual,exc_forecast,exc_previous&"
+        "columns=exc_flags,exc_currency&"
         "features=datepicker&"
         f"countries={country_codes}&"
+        f"importance={importance}&"
         "calType=week"
     )
     st.components.v1.iframe(src, height=height, scrolling=True)
-    st.caption("실시간 위젯 제공: Investing.com (공식 무료 임베드) · 상단 날짜선택기로 원하는 주간으로 이동 가능")
+    st.caption("실시간 위젯 제공: Investing.com (공식 무료 임베드) · 중요도 '높음'만 표시 · "
+               "상단 날짜선택기로 원하는 주간으로 이동 가능")
 
 
 def render_schedule_calendar(policy_events, country_label):
@@ -1593,23 +1598,11 @@ def render_schedule_calendar(policy_events, country_label):
                "공식 발표 기준 확정 정책일정만 표시 (FOMC/금통위)")
 
 
-def page_policy_us():
-    subtitle("주요 경제 캘린더 - 미국")
-    render_investing_calendar_widget(country_codes="5")  # 5 = United States
-    st.markdown("---")
-    st.markdown("**정책일정 확정치 (백업용 4주 달력)**")
-    render_schedule_calendar(POLICY_EVENTS_US_2026, "US")
+def page_economic_calendar():
+    render_investing_calendar_widget(country_codes="5,11", height=650)  # 5=미국, 11=한국 (확인 완료)
     st.markdown("[Fed 공식 캘린더](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm) · "
-                "[Investing.com 실적발표 캘린더](https://kr.investing.com/earnings-calendar)")
-
-
-def page_policy_kr():
-    subtitle("주요 경제 캘린더 - 한국")
-    render_investing_calendar_widget(country_codes="11")  # 11 = South Korea (미검증, 다르면 알려주세요)
-    st.markdown("---")
-    st.markdown("**정책일정 확정치 (백업용 4주 달력)**")
-    render_schedule_calendar(POLICY_EVENTS_KR_2026, "KR")
-    st.markdown("[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755) · "
+                "[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755) · "
+                "[Investing.com 실적발표 캘린더](https://kr.investing.com/earnings-calendar) · "
                 "[KIND 기업공시채널 IR일정](https://kind.krx.co.kr/corpgeneral/irschedule.do?method=searchIRScheduleMain&gubun=iRSchedule)")
 
 
@@ -1701,8 +1694,7 @@ MENU = {
         "종목 정보": page_stock_info,
     },
     "주요 경제 캘린더": {
-        "미국": page_policy_us,
-        "한국": page_policy_kr,
+        "주요 경제 캘린더": page_economic_calendar,
     },
 }
 
