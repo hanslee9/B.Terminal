@@ -25,6 +25,7 @@ h1,h2,h3 { color:#c05a00 !important; }
 .down { color:#c22; }
 .src-note { color:#888; font-size:11px; margin-top:8px; }
 .page-title { font-size:20px; font-weight:700; color:#c05a00; margin-bottom:4px; }
+.app-title { font-size:26px; font-weight:800; color:#1a1a1a; margin-bottom:2px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -97,21 +98,76 @@ def render_category_lists(categories: dict):
 
 @st.cache_data(ttl=60)
 def get_us_indices():
-    """미국 주요 지수 (yfinance)"""
+    """해외 주요 지수 (yfinance) — 국내지수와 동일한 컬럼 템플릿"""
     import yfinance as yf
-    tickers = {"^GSPC": "S&P 500", "^IXIC": "Nasdaq", "^DJI": "Dow Jones"}
+    tickers = {
+        "^GSPC": ("S&P 500", "미국"),
+        "^IXIC": ("Nasdaq", "미국"),
+        "^DJI": ("Dow Jones", "미국"),
+        "^N225": ("Nikkei 225", "일본"),
+        "^FTSE": ("FTSE 100", "영국"),
+        "^GDAXI": ("DAX", "독일"),
+        "^FCHI": ("CAC 40", "프랑스"),
+    }
     rows = []
-    for tk, name in tickers.items():
+    for tk, (name, country) in tickers.items():
         try:
             t = yf.Ticker(tk)
-            h = t.history(period="5d").dropna(subset=["Close"])  # 휴장일 빈 행 제외
+            h = t.history(period="10d").dropna(subset=["Close"])  # 휴장일 빈 행 제외
+            last_row = h.iloc[-1]
+            prev_close = h["Close"].iloc[-2]
+            chg = (last_row["Close"] - prev_close) / prev_close * 100
+            h1y = t.history(period="1y").dropna(subset=["Close"])
+            high52 = h1y["High"].max() if not h1y.empty else None
+            low52 = h1y["Low"].min() if not h1y.empty else None
+            rows.append({
+                "지수": name,
+                "국가": country,
+                "현재가": round(last_row["Close"], 2),
+                "전일대비": round(last_row["Close"] - prev_close, 2),
+                "등락률(%)": round(chg, 2),
+                "거래량": int(last_row["Volume"]) if last_row["Volume"] else None,
+                "52주 최고": round(high52, 2) if high52 is not None else None,
+                "52주 최저": round(low52, 2) if low52 is not None else None,
+            })
+        except Exception:
+            rows.append({"지수": name, "국가": country, "현재가": None, "전일대비": None,
+                          "등락률(%)": None, "거래량": None, "52주 최고": None, "52주 최저": None})
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=120)
+def get_us_sector_performance():
+    """
+    미국 섹터별 등락률 — SPDR Select Sector ETF 11종 (yfinance, 스크래핑 없이 안정적)
+    S&P 500을 11개 GICS 섹터로 나눈 대표 ETF들의 당일 등락률로 섹터 동향을 근사.
+    """
+    import yfinance as yf
+    sector_etfs = {
+        "XLK": "기술(Technology)",
+        "XLF": "금융(Financials)",
+        "XLE": "에너지(Energy)",
+        "XLV": "헬스케어(Health Care)",
+        "XLI": "산업재(Industrials)",
+        "XLY": "임의소비재(Cons. Discretionary)",
+        "XLP": "필수소비재(Cons. Staples)",
+        "XLU": "유틸리티(Utilities)",
+        "XLB": "소재(Materials)",
+        "XLRE": "부동산(Real Estate)",
+        "XLC": "커뮤니케이션(Communication)",
+    }
+    rows = []
+    for tk, name in sector_etfs.items():
+        try:
+            t = yf.Ticker(tk)
+            h = t.history(period="5d").dropna(subset=["Close"])
             last = h["Close"].iloc[-1]
             prev = h["Close"].iloc[-2]
             chg = (last - prev) / prev * 100
-            rows.append({"지수": name, "현재가": round(last, 2), "등락률(%)": round(chg, 2)})
-        except Exception as e:
-            rows.append({"지수": name, "현재가": None, "등락률(%)": None})
-    return pd.DataFrame(rows)
+            rows.append({"섹터": name, "ETF": tk, "등락률(%)": round(chg, 2)})
+        except Exception:
+            rows.append({"섹터": name, "ETF": tk, "등락률(%)": None})
+    return rows
 
 
 @st.cache_data(ttl=60)
@@ -951,7 +1007,7 @@ def debug_dump_table(url, max_rows=6):
 
 
 def page_index_kr():
-    subtitle("국내 지수")
+    subtitle("국내지수 및 업종")
     df = get_kr_indices()
     st.dataframe(
         df,
@@ -1050,7 +1106,7 @@ def page_index_kr():
 
 
 def page_index_us():
-    subtitle("해외 지수")
+    subtitle("해외지수 및 업종")
     df = get_us_indices()
     st.dataframe(
         df,
@@ -1058,10 +1114,30 @@ def page_index_us():
         hide_index=True,
         column_config={
             "현재가": st.column_config.NumberColumn(format="%,.2f"),
+            "전일대비": st.column_config.NumberColumn(format="%,.2f"),
             "등락률(%)": st.column_config.NumberColumn(format="%,.2f"),
+            "거래량": st.column_config.NumberColumn(format="%,d"),
+            "52주 최고": st.column_config.NumberColumn(format="%,.2f"),
+            "52주 최저": st.column_config.NumberColumn(format="%,.2f"),
         },
     )
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: Yahoo Finance(yfinance)")
+
+    st.markdown("---")
+    st.markdown("**업종별 시세 (미국)**")
+    st.caption("S&P 500을 11개 GICS 섹터로 나눈 SPDR Select Sector ETF의 당일 등락률로 섹터 동향을 근사한 것입니다.")
+    sectors = get_us_sector_performance()
+    if sectors:
+        sector_df = pd.DataFrame(sorted(sectors, key=lambda s: (s["등락률(%)"] is None, -(s["등락률(%)"] or 0))))
+        st.dataframe(
+            sector_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={"등락률(%)": st.column_config.NumberColumn(format="%,.2f")},
+        )
+    else:
+        st.caption("섹터 데이터를 불러오지 못했습니다.")
+    st.caption("출처: Yahoo Finance(yfinance), SPDR Select Sector ETF")
 
 
 def page_fx():
@@ -1213,8 +1289,8 @@ MENU = {
         "투자전략": page_research_strategy,
     },
     "📈 실시간 시황": {
-        "국내 지수": page_index_kr,
-        "해외 지수": page_index_us,
+        "국내지수 및 업종": page_index_kr,
+        "해외지수 및 업종": page_index_us,
         "환율": page_fx,
         "종목 조회": page_stock_search,
     },
@@ -1247,6 +1323,7 @@ chat_pct = st.session_state.get("chat_pct", 25)
 col_main, col_chat = st.columns([100 - chat_pct, chat_pct])
 
 with col_main:
+    st.markdown("<div class='app-title'>📊 투자 정보 터미널</div>", unsafe_allow_html=True)
     major, minor = st.session_state.page
     major_text = major.split(" ", 1)[-1] if " " in major else major  # 이모지 제거한 순수 텍스트
     title = major if minor == major_text else f"{major} · {minor}"
