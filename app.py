@@ -875,27 +875,59 @@ def get_stock_fundamentals(ticker):
             except Exception:
                 pass
 
-        # EPS / PER / PBR — trailing 값이 없으면 forward 값으로, PBR은 bookValue로 폴백
+        # EPS(trailing) / Fwd EPS — trailing이 없으면 순이익÷발행주식수로 직접 계산
         eps = info.get("trailingEps")
         if eps is None:
-            eps = info.get("forwardEps")
+            try:
+                shares = info.get("sharesOutstanding")
+                net_income = info.get("netIncomeToCommon")
+                if net_income is None:
+                    inc = t.income_stmt
+                    if inc is not None and not inc.empty:
+                        ni_row = next((lbl for lbl in inc.index if lbl == "Net Income"
+                                       or "Net Income Common Stockholders" in lbl), None)
+                        if ni_row is not None:
+                            series = inc.loc[ni_row].dropna()
+                            if len(series) >= 1:
+                                net_income = float(series.iloc[0])
+                if net_income and shares:
+                    eps = net_income / shares
+            except Exception:
+                pass
+        fwd_eps = info.get("forwardEps")
 
+        # PER(trailing) / Fwd PER
         per = info.get("trailingPE")
-        if per is None:
-            per = info.get("forwardPE")
         if per is None and eps and price:
             per = price / eps  # 최후 수단: 직접 계산
+        fwd_per = info.get("forwardPE")
+        if fwd_per is None and fwd_eps and price:
+            fwd_per = price / fwd_eps
 
+        # PBR — bookValue가 없으면 자본총계÷발행주식수로 직접 계산
         pbr = info.get("priceToBook")
         if pbr is None:
-            book_value = info.get("bookValue")
-            if book_value and price:
-                pbr = price / book_value  # 최후 수단: 현재가 / 주당순자산
+            try:
+                book_value = info.get("bookValue")
+                shares = info.get("sharesOutstanding")
+                if book_value is None:
+                    bs = t.balance_sheet
+                    if bs is not None and not bs.empty:
+                        eq_row = next((lbl for lbl in bs.index if "Stockholders Equity" in lbl), None)
+                        if eq_row is not None:
+                            series = bs.loc[eq_row].dropna()
+                            if len(series) >= 1 and shares:
+                                book_value = float(series.iloc[0]) / shares
+                if book_value and price:
+                    pbr = price / book_value
+            except Exception:
+                pass
 
-        # 배당수익률 — yfinance의 dividendYield 필드는 버전에 따라 값이 불안정해서
+        # 배당수익률 / 배당성향 — yfinance dividendYield 필드는 버전별로 불안정해서
         # 배당금(dividendRate, 주당 연간 배당금) / 현재가로 직접 계산 (더 신뢰도 높음)
         dividend_rate = info.get("dividendRate")
         div_yield = (dividend_rate / price * 100) if (dividend_rate and price) else None
+        payout_ratio = (info.get("payoutRatio") * 100) if info.get("payoutRatio") is not None else None
 
         return {
             "종목명": info.get("longName", ticker),
@@ -911,12 +943,15 @@ def get_stock_fundamentals(ticker):
             "영업이익률(%)": (info.get("operatingMargins") * 100) if info.get("operatingMargins") is not None else None,
             "영업이익증가율(%)": op_income_growth,
             "EPS": eps,
+            "Fwd EPS": fwd_eps,
             "PER": per,
+            "Fwd PER": fwd_per,
             "PBR": pbr,
             "PEG": info.get("pegRatio"),
             "베타": info.get("beta"),
             "ROE(%)": (info.get("returnOnEquity") * 100) if info.get("returnOnEquity") is not None else None,
             "부채비율(%)": info.get("debtToEquity"),
+            "배당성향(%)": payout_ratio,
             "배당수익률(%)": div_yield,
             "FCF": fcf,
             "통화": info.get("currency", ""),
@@ -930,8 +965,8 @@ def render_fundamentals_table(data):
     currency = data.get("통화", "")
     money_fields = ["시가총액", "현재가", "52주 최고", "52주 최저", "전일비", "매출액", "영업이익", "FCF"]
     pct_fields = ["전일비(%)", "매출증가율(%)", "영업이익률(%)", "영업이익증가율(%)",
-                  "ROE(%)", "부채비율(%)", "배당수익률(%)"]
-    ratio_fields = ["EPS", "PER", "PBR", "PEG", "베타"]
+                  "ROE(%)", "부채비율(%)", "배당성향(%)", "배당수익률(%)"]
+    ratio_fields = ["EPS", "Fwd EPS", "PER", "Fwd PER", "PBR", "PEG", "베타"]
 
     def fmt(key, val):
         if val is None:
@@ -947,7 +982,8 @@ def render_fundamentals_table(data):
 
     order = ["시가총액", "현재가", "52주 최고", "52주 최저", "전일비", "전일비(%)",
              "매출액", "매출증가율(%)", "영업이익", "영업이익률(%)", "영업이익증가율(%)",
-             "EPS", "PER", "PBR", "PEG", "베타", "ROE(%)", "부채비율(%)", "배당수익률(%)", "FCF"]
+             "EPS", "Fwd EPS", "PER", "Fwd PER", "PBR", "PEG", "베타",
+             "ROE(%)", "부채비율(%)", "배당성향(%)", "배당수익률(%)", "FCF"]
     rows = [{"지표": k, "값": fmt(k, data.get(k))} for k in order]
 
     def color_neg(row):
