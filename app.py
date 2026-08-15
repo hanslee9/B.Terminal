@@ -1543,9 +1543,9 @@ def render_tv_calendar_widget(country_codes="kr,us", height=550, importance="1")
       {{
       "colorTheme": "light",
       "isTransparent": false,
-      "width": "100%",
+      "width": "1000",
       "height": "{height}",
-      "locale": "kr",
+      "locale": "ko",
       "importanceFilter": "{importance}",
       "countryFilter": "{country_codes}"
       }}
