@@ -141,32 +141,33 @@ def get_us_sector_performance():
     """
     미국 섹터별 등락률 — SPDR Select Sector ETF 11종 (yfinance, 스크래핑 없이 안정적)
     S&P 500을 11개 GICS 섹터로 나눈 대표 ETF들의 당일 등락률로 섹터 동향을 근사.
+    종목수는 실시간 조회가 아닌 GICS 표준 기준 근사치(참고용).
     """
     import yfinance as yf
     sector_etfs = {
-        "XLK": "기술(Technology)",
-        "XLF": "금융(Financials)",
-        "XLE": "에너지(Energy)",
-        "XLV": "헬스케어(Health Care)",
-        "XLI": "산업재(Industrials)",
-        "XLY": "임의소비재(Cons. Discretionary)",
-        "XLP": "필수소비재(Cons. Staples)",
-        "XLU": "유틸리티(Utilities)",
-        "XLB": "소재(Materials)",
-        "XLRE": "부동산(Real Estate)",
-        "XLC": "커뮤니케이션(Communication)",
+        "XLK": ("기술(Technology)", 66),
+        "XLF": ("금융(Financials)", 73),
+        "XLE": ("에너지(Energy)", 22),
+        "XLV": ("헬스케어(Health Care)", 61),
+        "XLI": ("산업재(Industrials)", 78),
+        "XLY": ("임의소비재(Cons. Discretionary)", 51),
+        "XLP": ("필수소비재(Cons. Staples)", 38),
+        "XLU": ("유틸리티(Utilities)", 31),
+        "XLB": ("소재(Materials)", 26),
+        "XLRE": ("부동산(Real Estate)", 31),
+        "XLC": ("커뮤니케이션(Communication)", 23),
     }
     rows = []
-    for tk, name in sector_etfs.items():
+    for tk, (name, n_stocks) in sector_etfs.items():
         try:
             t = yf.Ticker(tk)
             h = t.history(period="5d").dropna(subset=["Close"])
             last = h["Close"].iloc[-1]
             prev = h["Close"].iloc[-2]
             chg = (last - prev) / prev * 100
-            rows.append({"섹터": name, "ETF": tk, "등락률(%)": round(chg, 2)})
+            rows.append({"섹터": name, "ETF": tk, "종목수(약)": n_stocks, "등락률(%)": round(chg, 2)})
         except Exception:
-            rows.append({"섹터": name, "ETF": tk, "등락률(%)": None})
+            rows.append({"섹터": name, "ETF": tk, "종목수(약)": n_stocks, "등락률(%)": None})
     return rows
 
 
@@ -237,6 +238,29 @@ def fmt_num(n, unit=""):
     color = "#c22" if n < 0 else "#1a1a1a"
     sign = "+" if n > 0 else ""
     return f"<span style='color:{color};'>{sign}{n:,.0f}{unit}</span>"
+
+
+def style_negatives_red(df, fmt_map):
+    """
+    st.dataframe에 넘길 pandas Styler 생성.
+    fmt_map: {컬럼명: '{:,.2f}' 같은 포맷 문자열} — 지정된 컬럼에 콤마/소수점 서식 적용,
+    값이 음수면 '-' 기호 포함해서 빨간색으로 표시.
+    """
+    def _color_neg(val):
+        try:
+            if val is not None and float(val) < 0:
+                return "color:#c22;"
+        except (TypeError, ValueError):
+            pass
+        return ""
+
+    sty = df.style
+    try:
+        sty = sty.map(_color_neg, subset=list(fmt_map.keys()))
+    except AttributeError:
+        sty = sty.applymap(_color_neg, subset=list(fmt_map.keys()))
+    sty = sty.format(fmt_map, na_rep="-")
+    return sty
 
 
 @st.cache_data(ttl=300)
@@ -1010,17 +1034,16 @@ def page_index_kr():
     subtitle("국내지수 및 업종")
     df = get_kr_indices()
     st.dataframe(
-        df,
+        style_negatives_red(df, {
+            "현재가": "{:,.2f}",
+            "전일대비": "{:,.2f}",
+            "등락률(%)": "{:,.2f}",
+            "거래량": "{:,.0f}",
+            "52주 최고": "{:,.2f}",
+            "52주 최저": "{:,.2f}",
+        }),
         use_container_width=True,
         hide_index=True,
-        column_config={
-            "현재가": st.column_config.NumberColumn(format="%,.2f"),
-            "전일대비": st.column_config.NumberColumn(format="%,.2f"),
-            "등락률(%)": st.column_config.NumberColumn(format="%,.2f"),
-            "거래량": st.column_config.NumberColumn(format="%,d"),
-            "52주 최고": st.column_config.NumberColumn(format="%,.2f"),
-            "52주 최저": st.column_config.NumberColumn(format="%,.2f"),
-        },
     )
 
     c1, c2 = st.columns(2)
@@ -1109,31 +1132,30 @@ def page_index_us():
     subtitle("해외지수 및 업종")
     df = get_us_indices()
     st.dataframe(
-        df,
+        style_negatives_red(df, {
+            "현재가": "{:,.2f}",
+            "전일대비": "{:,.2f}",
+            "등락률(%)": "{:,.2f}",
+            "거래량": "{:,.0f}",
+            "52주 최고": "{:,.2f}",
+            "52주 최저": "{:,.2f}",
+        }),
         use_container_width=True,
         hide_index=True,
-        column_config={
-            "현재가": st.column_config.NumberColumn(format="%,.2f"),
-            "전일대비": st.column_config.NumberColumn(format="%,.2f"),
-            "등락률(%)": st.column_config.NumberColumn(format="%,.2f"),
-            "거래량": st.column_config.NumberColumn(format="%,d"),
-            "52주 최고": st.column_config.NumberColumn(format="%,.2f"),
-            "52주 최저": st.column_config.NumberColumn(format="%,.2f"),
-        },
     )
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: Yahoo Finance(yfinance)")
 
     st.markdown("---")
     st.markdown("**업종별 시세 (미국)**")
-    st.caption("S&P 500을 11개 GICS 섹터로 나눈 SPDR Select Sector ETF의 당일 등락률로 섹터 동향을 근사한 것입니다.")
+    st.caption("S&P 500을 11개 GICS 섹터로 나눈 SPDR Select Sector ETF의 당일 등락률로 섹터 동향을 근사한 것입니다. "
+               "종목수는 실시간 집계가 아닌 GICS 기준 근사치입니다.")
     sectors = get_us_sector_performance()
     if sectors:
         sector_df = pd.DataFrame(sorted(sectors, key=lambda s: (s["등락률(%)"] is None, -(s["등락률(%)"] or 0))))
         st.dataframe(
-            sector_df,
+            style_negatives_red(sector_df, {"등락률(%)": "{:,.2f}"}),
             use_container_width=True,
             hide_index=True,
-            column_config={"등락률(%)": st.column_config.NumberColumn(format="%,.2f")},
         )
     else:
         st.caption("섹터 데이터를 불러오지 못했습니다.")
