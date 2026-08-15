@@ -1530,32 +1530,60 @@ POLICY_EVENTS_KR_2026 = [
 ]
 
 
-def render_tv_calendar_widget(country_codes="kr,us", height=550, importance="1"):
-    """TradingView 공식 무료 임베드 경제캘린더 위젯 (정식 script, 스크래핑 아님).
-    countryFilter는 소문자 2자리 코드(kr,us 등) — 알아보기 쉬움.
-    importanceFilter: -1(낮음)~1(높음) 범위, '1'은 높음만.
-    locale='kr'로 한국어 표시 시도."""
-    html = f"""
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript"
-        src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
-      {{
-      "colorTheme": "light",
-      "isTransparent": false,
-      "width": "1000",
-      "height": "{height}",
-      "locale": "ko",
-      "importanceFilter": "{importance}",
-      "countryFilter": "{country_codes}"
-      }}
-      </script>
-    </div>
-    """
-    st.components.v1.html(html, height=height + 30, scrolling=True)
-    st.caption("실시간 위젯 제공: TradingView (공식 무료 임베드) · 중요도 '높음'만 · 국가: 한국·미국")
+@st.cache_data(ttl=3600)
+def ai_fetch_economic_calendar():
+    """AI 웹서치로 향후 3주간 한국+미국 핵심 경제일정을 표로 조사 (API 키 필요).
+    반환: [{"날짜":"8월19일(수)","국가":"미국","이벤트":"...","중요도":"상"}]"""
+    today_str = datetime.now().strftime("%Y년 %m월 %d일")
+    system = (
+        "당신은 경제 캘린더 조사 애널리스트입니다. 웹검색으로 확인한 정보를 바탕으로, 오늘부터 "
+        "3주간 예정된 미국과 한국의 핵심 거시경제 지표 발표 및 통화정책 일정을 조사해서 "
+        "오직 JSON 배열로만 답하세요. 중요도가 '중' 이상인 것만 포함하고, GDP·CPI·PCE·고용지표· "
+        "FOMC·금통위·PMI처럼 시장에 실질적 영향을 주는 지표 위주로 간추리세요. "
+        "형식: [{\"날짜\":\"8월19일(수)\",\"국가\":\"미국\",\"이벤트\":\"7월 FOMC 의사록 공개\",\"중요도\":\"중\"}]. "
+        "날짜는 한국시간 기준 'N월 N일(요일)' 형식, 중요도는 '중' 또는 '상'만 사용, 날짜순으로 정렬하세요. "
+        "확인 안 되면 빈 배열 []을 반환하세요."
+    )
+    prompt = f"오늘은 {today_str}입니다. 오늘부터 3주간 미국과 한국의 주요 경제지표 발표 및 통화정책 일정을 조사해줘."
+    data, err = ask_ai(prompt, system_prompt=system, want_json=True, max_tokens=2000)
+    return (data if isinstance(data, list) else []), err
 
 
+def render_ai_economic_calendar():
+    """AI가 조사한 경제일정을 표로 렌더 (날짜/국가/이벤트/중요도만, 요일별 테이블 아님)"""
+    events, err = ai_fetch_economic_calendar()
+    if not events:
+        st.info("AI 경제일정 조사에 실패했습니다. 아래 백업 달력(FOMC/금통위)을 참고해주세요.")
+        if err and err != "API 키 없음":
+            st.caption(f"오류 상세: {err}")
+        return False
+
+    def imp_badge(level):
+        color = "#c22" if level == "상" else "#c07a1a"
+        return f"<span style='color:{color};font-weight:700;'>{level}</span>"
+
+    rows_html = "".join(
+        f"<tr style='border-bottom:1px solid #eee;'>"
+        f"<td style='padding:6px 8px;white-space:nowrap;'>{e.get('날짜','-')}</td>"
+        f"<td style='padding:6px 8px;white-space:nowrap;'>{e.get('국가','-')}</td>"
+        f"<td style='padding:6px 8px;'>{e.get('이벤트','-')}</td>"
+        f"<td style='padding:6px 8px;text-align:center;'>{imp_badge(e.get('중요도','중'))}</td>"
+        f"</tr>"
+        for e in events
+    )
+    html = (
+        "<table style='width:100%;border-collapse:collapse;font-size:13px;'>"
+        "<tr style='background:#f5f5f5;'>"
+        "<th style='padding:6px 8px;text-align:left;'>날짜</th>"
+        "<th style='padding:6px 8px;text-align:left;'>국가</th>"
+        "<th style='padding:6px 8px;text-align:left;'>이벤트</th>"
+        "<th style='padding:6px 8px;'>중요도</th></tr>"
+        f"{rows_html}</table>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
+    st.caption(f"AI 웹서치 조사 · {datetime.now().strftime('%Y-%m-%d %H:%M')} 기준 · "
+               "오늘부터 3주간 · 참고용, 정확한 시간은 원문 확인 권장")
+    return True
 
 
 def render_schedule_calendar(policy_events, country_label):
@@ -1609,7 +1637,18 @@ def render_schedule_calendar(policy_events, country_label):
 
 
 def page_economic_calendar():
-    render_tv_calendar_widget(country_codes="kr,us", height=650)
+    if get_anthropic_client() is not None:
+        ok = render_ai_economic_calendar()
+        st.markdown("---")
+        if not ok:
+            st.markdown("**백업: 정책일정 확정치 (4주 달력)**")
+            render_schedule_calendar(POLICY_EVENTS_US_2026, "US")
+            render_schedule_calendar(POLICY_EVENTS_KR_2026, "KR")
+    else:
+        st.info("AI 경제일정 조사를 쓰려면 Anthropic API 키가 필요합니다. 대신 확정된 정책일정(FOMC/금통위)을 보여드립니다.")
+        render_schedule_calendar(POLICY_EVENTS_US_2026, "US")
+        render_schedule_calendar(POLICY_EVENTS_KR_2026, "KR")
+
     st.markdown("[Fed 공식 캘린더](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm) · "
                 "[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755) · "
                 "[Investing.com 실적발표 캘린더](https://kr.investing.com/earnings-calendar) · "
