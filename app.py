@@ -1507,20 +1507,110 @@ def page_stock_info():
     st.caption("출처: Yahoo Finance(yfinance) · 정확한 티커를 모르면 종목명(한글/영문)을 그대로 입력하세요 (자동 인식)")
 
 
+# 2026년 공식 발표된 정책일정 (FOMC: 연준, 금통위: 한국은행 통화정책방향 결정회의)
+# 출처: federalreserve.gov, 한국은행 보도자료(2025.10.30 발표) — 날짜 변경 가능성은 낮으나 확정 아님
+POLICY_EVENTS_US_2026 = [
+    ("2026-01-27", "FOMC 회의 (~1/28)"),
+    ("2026-03-17", "FOMC 회의 (~3/18)"),
+    ("2026-04-28", "FOMC 회의 (~4/29)"),
+    ("2026-06-16", "FOMC 회의 (~6/17)"),
+    ("2026-07-28", "FOMC 회의 (~7/29)"),
+    ("2026-09-15", "FOMC 회의 (~9/16)"),
+]
+
+POLICY_EVENTS_KR_2026 = [
+    ("2026-01-15", "금통위 통화정책방향 결정회의"),
+    ("2026-02-26", "금통위 통화정책방향 결정회의"),
+    ("2026-04-10", "금통위 통화정책방향 결정회의"),
+    ("2026-05-28", "금통위 통화정책방향 결정회의"),
+    ("2026-07-16", "금통위 통화정책방향 결정회의"),
+    ("2026-08-27", "금통위 통화정책방향 결정회의"),
+    ("2026-10-22", "금통위 통화정책방향 결정회의"),
+    ("2026-11-26", "금통위 통화정책방향 결정회의"),
+]
+
+
+def render_investing_calendar_widget(country_codes, height=480):
+    """Investing.com 공식 무료 임베드 경제캘린더 위젯 (스크래핑 아님, 정식 iframe)"""
+    src = (
+        "https://sslecal2.investing.com?"
+        "columns=exc_flags,exc_currency,exc_importance,exc_actual,exc_forecast,exc_previous&"
+        "features=datepicker&"
+        f"countries={country_codes}&"
+        "calType=week"
+    )
+    st.components.v1.iframe(src, height=height, scrolling=True)
+    st.caption("실시간 위젯 제공: Investing.com (공식 무료 임베드) · 상단 날짜선택기로 원하는 주간으로 이동 가능")
+
+
+def render_schedule_calendar(policy_events, country_label):
+    """오늘이 포함된 주(월요일 시작) ~ 향후 4주간을 Mon~Fri 달력으로 렌더 (정책일정 확정치, 백업용)"""
+    today = datetime.now().date()
+    monday_this_week = today - pd.Timedelta(days=today.weekday())  # 이번 주 월요일
+    weeks = []
+    for w in range(4):
+        week_start = monday_this_week + pd.Timedelta(days=7 * w)
+        days = [week_start + pd.Timedelta(days=d) for d in range(5)]  # Mon~Fri
+        weeks.append(days)
+
+    range_start = weeks[0][0]
+    range_end = weeks[-1][-1]
+
+    events_by_date = {}
+    for date_str, label in policy_events:
+        d = pd.Timestamp(date_str).date()
+        if range_start <= d <= range_end:
+            events_by_date.setdefault(d, []).append(label)
+
+    def _event_line(title):
+        return f"<div style='font-size:11.5px;color:#1155cc;margin-top:2px;'>- {title}</div>"
+
+    weekday_names = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    html = "<table style='width:100%;border-collapse:collapse;table-layout:fixed;'>"
+    html += "<tr>" + "".join(
+        f"<th style='background:#f5c9a0;padding:8px;border:1px solid #999;font-size:13px;'>{w}</th>"
+        for w in weekday_names
+    ) + "</tr>"
+
+    for week in weeks:
+        html += "<tr>"
+        for day in week:
+            is_today = (day == today)
+            date_color = "#c0206a" if is_today else "#333"
+            font_weight = "700" if is_today else "400"
+            evs = events_by_date.get(day, [])
+            ev_html = "".join(_event_line(e) for e in evs)
+            html += (
+                f"<td style='border:1px solid #999;vertical-align:top;height:90px;padding:5px;width:20%;'>"
+                f"<div style='font-size:12px;color:{date_color};font-weight:{font_weight};'>{day.day}</div>"
+                f"{ev_html}"
+                f"</td>"
+            )
+        html += "</tr>"
+    html += "</table>"
+    st.markdown(html, unsafe_allow_html=True)
+    st.caption(f"{range_start.strftime('%Y-%m-%d')} ~ {range_end.strftime('%Y-%m-%d')} · "
+               "공식 발표 기준 확정 정책일정만 표시 (FOMC/금통위)")
+
+
 def page_policy_us():
-    subtitle("미국 정책/일정 (수동 업데이트 중 — 추후 자동화 예정)")
-    st.info("FOMC 등 일정은 현재 수동 목록입니다. 다음 단계에서 Fed 공식 캘린더 연동으로 자동화 가능합니다.")
-    sample = pd.DataFrame([
-        {"일정": "FOMC 회의", "날짜": "다음 회의 일정 확인 필요", "비고": "federalreserve.gov 캘린더 참고"},
-    ])
-    st.dataframe(sample, use_container_width=True, hide_index=True)
-    st.markdown("[Fed 공식 캘린더](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)")
+    subtitle("주요 경제 캘린더 - 미국")
+    render_investing_calendar_widget(country_codes="5")  # 5 = United States
+    st.markdown("---")
+    st.markdown("**정책일정 확정치 (백업용 4주 달력)**")
+    render_schedule_calendar(POLICY_EVENTS_US_2026, "US")
+    st.markdown("[Fed 공식 캘린더](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm) · "
+                "[Investing.com 실적발표 캘린더](https://kr.investing.com/earnings-calendar)")
 
 
 def page_policy_kr():
-    subtitle("한국 정책/일정 (수동 업데이트 중 — 추후 자동화 예정)")
-    st.info("금통위 등 일정은 현재 수동 목록입니다. 다음 단계에서 한국은행 공식 캘린더 연동으로 자동화 가능합니다.")
-    st.markdown("[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755)")
+    subtitle("주요 경제 캘린더 - 한국")
+    render_investing_calendar_widget(country_codes="11")  # 11 = South Korea (미검증, 다르면 알려주세요)
+    st.markdown("---")
+    st.markdown("**정책일정 확정치 (백업용 4주 달력)**")
+    render_schedule_calendar(POLICY_EVENTS_KR_2026, "KR")
+    st.markdown("[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755) · "
+                "[KIND 기업공시채널 IR일정](https://kind.krx.co.kr/corpgeneral/irschedule.do?method=searchIRScheduleMain&gubun=iRSchedule)")
 
 
 def render_ai_chat_panel():
@@ -1610,7 +1700,7 @@ MENU = {
         "환율": page_fx,
         "종목 정보": page_stock_info,
     },
-    "주요 일정": {
+    "주요 경제 캘린더": {
         "미국": page_policy_us,
         "한국": page_policy_kr,
     },
