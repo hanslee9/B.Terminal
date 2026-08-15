@@ -1530,22 +1530,29 @@ POLICY_EVENTS_KR_2026 = [
 ]
 
 
-def render_investing_calendar_widget(country_codes, height=480, importance="3"):
+def render_investing_calendar_widget(country_codes, height=480, importance="3", days_ahead=15):
     """Investing.com 공식 무료 임베드 경제캘린더 위젯 (스크래핑 아님, 정식 iframe).
     importance='3'은 '높음'(별3개)만 필터 — 위젯 생성기에도 있는 공식 지원 파라미터.
     columns는 국기/통화만 남겨서 시간·국가·이벤트 위주로 간결하게 표시
-    (라벨 텍스트나 레이아웃 자체는 다른 도메인 콘텐츠라 커스터마이징 불가)."""
+    (라벨 텍스트나 레이아웃 자체는 다른 도메인 콘텐츠라 커스터마이징 불가).
+    dateFrom/dateTo는 공식 문서에 없는 비공식 시도 — 안 먹히면 위젯 자체 날짜선택기로 수동 조정 필요."""
+    today = datetime.now().date()
+    date_from = today.strftime("%Y-%m-%d")
+    date_to = (today + pd.Timedelta(days=days_ahead)).strftime("%Y-%m-%d")
     src = (
         "https://sslecal2.investing.com?"
         "columns=exc_flags,exc_currency&"
         "features=datepicker&"
         f"countries={country_codes}&"
         f"importance={importance}&"
-        "calType=week"
+        f"dateFrom={date_from}&"
+        f"dateTo={date_to}&"
+        "calType=custom"
     )
     st.components.v1.iframe(src, height=height, scrolling=True)
-    st.caption("실시간 위젯 제공: Investing.com (공식 무료 임베드) · 중요도 '높음'만 표시 · "
-               "상단 날짜선택기로 원하는 주간으로 이동 가능")
+    st.caption(f"실시간 위젯 제공: Investing.com (공식 무료 임베드) · 중요도 '높음'만 표시 · "
+               f"오늘({date_from}) ~ {days_ahead}일 후({date_to}) 자동 설정 시도 — 범위가 안 맞으면 "
+               "상단 날짜선택기로 직접 조정해주세요")
 
 
 def render_schedule_calendar(policy_events, country_label):
