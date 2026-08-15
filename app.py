@@ -1553,7 +1553,7 @@ def render_ai_economic_calendar():
     """AI가 조사한 경제일정을 표로 렌더 (날짜/국가/이벤트/중요도만, 요일별 테이블 아님)"""
     events, err = ai_fetch_economic_calendar()
     if not events:
-        st.info("AI 경제일정 조사에 실패했습니다. 아래 백업 달력(FOMC/금통위)을 참고해주세요.")
+        st.info("AI 경제일정 조사에 실패했습니다. 잠시 후 다시 시도해주세요.")
         if err and err != "API 키 없음":
             st.caption(f"오류 상세: {err}")
         return False
@@ -1640,16 +1640,10 @@ def render_schedule_calendar(policy_events, country_label):
 
 def page_economic_calendar():
     if get_anthropic_client() is not None:
-        ok = render_ai_economic_calendar()
-        st.markdown("---")
-        if not ok:
-            st.markdown("**백업: 정책일정 확정치 (4주 달력)**")
-            render_schedule_calendar(POLICY_EVENTS_US_2026, "US")
-            render_schedule_calendar(POLICY_EVENTS_KR_2026, "KR")
+        render_ai_economic_calendar()
     else:
-        st.info("주요 경제일정 캘린더를 검색하려면 Anthropic API 키가 필요합니다. 별도의 Claude AI 화면에서 작성 가능합니다.")
-        render_schedule_calendar(POLICY_EVENTS_US_2026, "US")
-        render_schedule_calendar(POLICY_EVENTS_KR_2026, "KR")
+        st.info("주요 경제일정 캘린더를 검색하려면 Anthropic API 키가 필요합니다. 기본적인 주요 일정은 아래 링크를 참조하시고, "
+                "정리된 일정을 원하시면 별도의 Claude AI 화면에서 작성 가능합니다.")
 
     st.markdown("[Fed 공식 캘린더](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm) · "
                 "[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755) · "
