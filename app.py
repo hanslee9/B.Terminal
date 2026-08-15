@@ -1647,7 +1647,7 @@ def page_economic_calendar():
             render_schedule_calendar(POLICY_EVENTS_US_2026, "US")
             render_schedule_calendar(POLICY_EVENTS_KR_2026, "KR")
     else:
-        st.info("AI 경제일정 조사를 쓰려면 Anthropic API 키가 필요합니다. 대신 확정된 정책일정(FOMC/금통위)을 보여드립니다.")
+        st.info("주요 경제일정 캘린더를 검색하려면 Anthropic API 키가 필요합니다. 별도의 Claude AI 화면에서 작성 가능합니다.")
         render_schedule_calendar(POLICY_EVENTS_US_2026, "US")
         render_schedule_calendar(POLICY_EVENTS_KR_2026, "KR")
 
