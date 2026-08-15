@@ -269,10 +269,11 @@ def get_naver_investor_trend(sosok):
 
 
 @st.cache_data(ttl=300)
-def get_naver_sector_list(limit=15):
+def get_naver_sector_list():
     """
-    업종별(섹터) 등락률 + 상승/보합/하락 종목수.
+    업종별(섹터) 전체 목록 — 등락률 + 전체종목수/상승/보합/하락.
     실제 확인된 컬럼 구조: [업종명, 등락률(%), 전체종목수, 상승, 보합, 하락, 등락그래프(%)]
+    limit 없이 전체(약 80개)를 반환. 화면에서 필요한 만큼 잘라 쓰면 됨.
     """
     from bs4 import BeautifulSoup
     url = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
@@ -295,15 +296,22 @@ def get_naver_sector_list(limit=15):
             cell_texts = [td.get_text(strip=True) for td in tds]
             if len(cell_texts) < 6:
                 continue
+
+            chg_str = cell_texts[1]
+            try:
+                chg_val = float(chg_str.replace("%", "").replace("+", ""))
+            except ValueError:
+                chg_val = 0.0
+
             rows.append({
                 "업종": name,
-                "등락률(%)": cell_texts[1],
+                "등락률(%)": chg_str,
+                "_등락률_값": chg_val,  # 정렬용 (화면 표시 안 함)
+                "전체": cell_texts[2],
                 "상승": cell_texts[3],
                 "보합": cell_texts[4],
                 "하락": cell_texts[5],
             })
-            if len(rows) >= limit:
-                break
         return rows
     except Exception:
         return []
@@ -983,13 +991,30 @@ def page_index_kr():
     st.caption("출처: 네이버금융 · 단위 억원, 음수(빨간색)는 순매도")
 
     st.markdown("---")
-    st.markdown("**업종별 시세 (등락률 상위)**")
-    sectors = get_naver_sector_list(limit=15)
-    if sectors:
-        st.dataframe(pd.DataFrame(sectors), use_container_width=True, hide_index=True)
+    st.markdown("**업종별 시세**")
+    all_sectors = get_naver_sector_list()
+    if all_sectors:
+        total_n = len(all_sectors)
+        up_n = sum(1 for s in all_sectors if s["_등락률_값"] > 0)
+        down_n = sum(1 for s in all_sectors if s["_등락률_값"] < 0)
+        flat_n = total_n - up_n - down_n
+        st.markdown(
+            f"전체 **{total_n}개 업종** 중 <span style='color:#1a7a1a;'>상승 {up_n}개</span> · "
+            f"보합 {flat_n}개 · <span style='color:#c22;'>하락 {down_n}개</span>",
+            unsafe_allow_html=True
+        )
+
+        top20 = sorted(all_sectors, key=lambda s: s["_등락률_값"], reverse=True)[:20]
+        display_df = pd.DataFrame([
+            {"업종": s["업종"], "등락률(%)": s["등락률(%)"], "총 종목수": s["전체"],
+             "상승": s["상승"], "보합": s["보합"], "하락": s["하락"]}
+            for s in top20
+        ])
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.caption("상위 20개(등락률 기준) · 상세 전체 내역은 "
+                   "[네이버금융 업종별시세](https://finance.naver.com/sise/sise_group.naver?type=upjong) 참조")
     else:
         st.caption("업종별 시세를 불러오지 못했습니다.")
-    st.caption("출처: 네이버금융 업종별시세")
 
     st.markdown("---")
     if st.checkbox("🔧 진단모드 (원본 데이터 구조 보기)", key="idx_debug"):
