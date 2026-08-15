@@ -399,12 +399,37 @@ def get_naver_sector_list():
 
 @st.cache_data(ttl=300)
 def get_fx():
-    """환율 (frankfurter.app - 무료, 키 불필요, ECB 기준)"""
+    """
+    환율 (frankfurter.app - 무료, 키 불필요, ECB 기준)
+    라벨은 'KRW/USD' 형태(1달러당 해당 통화)로 표시. 모든 통화 동일한 방식(역수 없음).
+    전일/전월/전년 대비 등락률(%) 포함.
+    """
+    today = datetime.now()
+    date_points = {
+        "오늘": today,
+        "전일": today - pd.Timedelta(days=1),
+        "전월": today - pd.DateOffset(months=1),
+        "전년": today - pd.DateOffset(years=1),
+    }
     try:
-        r = requests.get("https://api.frankfurter.app/latest",
-                          params={"from": "USD", "to": "KRW,JPY,EUR,GBP,CNY"}, timeout=5)
-        data = r.json()["rates"]
-        rows = [{"통화쌍": f"USD/{k}", "환율": v} for k, v in data.items()]
+        rates_by_period = {}
+        for label, d in date_points.items():
+            date_str = d.strftime("%Y-%m-%d")
+            r = requests.get(f"https://api.frankfurter.app/{date_str}",
+                              params={"from": "USD", "to": "KRW,JPY,EUR,GBP,CNY"}, timeout=6)
+            rates_by_period[label] = r.json().get("rates", {})
+
+        today_rates = rates_by_period["오늘"]
+        rows = []
+        for code, val in today_rates.items():
+            row = {"통화쌍": f"{code}/USD", "환율": round(val, 4)}
+            for period in ("전일", "전월", "전년"):
+                prev = rates_by_period[period].get(code)
+                if prev:
+                    row[f"{period}대비(%)"] = round((val - prev) / prev * 100, 2)
+                else:
+                    row[f"{period}대비(%)"] = None
+            rows.append(row)
         return pd.DataFrame(rows)
     except Exception as e:
         return pd.DataFrame([{"통화쌍": "조회 실패", "환율": str(e)}])
@@ -1165,7 +1190,16 @@ def page_index_us():
 def page_fx():
     subtitle("환율")
     df = get_fx()
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        style_negatives_red(df, {
+            "환율": "{:,.2f}",
+            "전일대비(%)": "{:,.2f}",
+            "전월대비(%)": "{:,.2f}",
+            "전년대비(%)": "{:,.2f}",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
     st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} · 출처: frankfurter.app (ECB 기준)")
 
 
