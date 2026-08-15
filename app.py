@@ -1543,7 +1543,6 @@ def _render_stock_info_section(country_label, default_hint, key_prefix):
 
 
 def page_stock_info():
-    subtitle("종목 정보")
     _render_stock_info_section("🇺🇸 미국", "예: AAPL, TSLA, NVDA", "us_stock")
     st.markdown("---")
     _render_stock_info_section("🇰🇷 한국", "예: 005930.KS, SK하이닉스, 삼성전자", "kr_stock")
@@ -1771,15 +1770,17 @@ MENU = {
     },
     "리서치": {
         "종합": page_research_general,
-        "기업분석": page_research_company,
         "산업분석": page_research_industry,
         "투자전략": page_research_strategy,
+    },
+    "종목분석": {
+        "기업분석": page_research_company,
+        "종목 정보": page_stock_info,
     },
     "실시간 시황": {
         "국내지수 및 업종": page_index_kr,
         "해외지수 및 업종": page_index_us,
         "환율": page_fx,
-        "종목 정보": page_stock_info,
     },
     "주요 경제 캘린더": {
         "주요 경제 캘린더": page_economic_calendar,
