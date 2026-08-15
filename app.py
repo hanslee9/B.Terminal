@@ -1530,24 +1530,32 @@ POLICY_EVENTS_KR_2026 = [
 ]
 
 
-def render_investing_calendar_widget(country_codes, height=480, importance="3"):
-    """Investing.com 공식 무료 임베드 경제캘린더 위젯 (스크래핑 아님, 정식 iframe).
-    importance='3'은 '높음'(별3개)만 필터 — 위젯 생성기에도 있는 공식 지원 파라미터.
-    columns는 국기/통화만 남겨서 시간·국가·이벤트 위주로 간결하게 표시
-    (라벨 텍스트나 레이아웃 자체는 다른 도메인 콘텐츠라 커스터마이징 불가).
-    calType은 'day'/'week'만 공식 지원 — 15/30일 등 임의 범위 자동 지정은 이 위젯에서 불가능해서
-    week로 시작하고, 원하는 범위는 위젯 안의 날짜선택기(datepicker)로 직접 조정해야 함."""
-    src = (
-        "https://sslecal2.investing.com?"
-        "columns=exc_flags,exc_currency&"
-        "features=datepicker&"
-        f"countries={country_codes}&"
-        f"importance={importance}&"
-        "calType=nextWeek"
-    )
-    st.components.v1.iframe(src, height=height, scrolling=True)
-    st.caption("실시간 위젯 제공: Investing.com (공식 무료 임베드) · 중요도 '높음'만 표시 · "
-               "기본은 이번 주만 표시됩니다 — 상단 날짜선택기(달력 아이콘)를 눌러 원하는 기간으로 직접 조정해주세요")
+def render_tv_calendar_widget(country_codes="kr,us", height=550, importance="1"):
+    """TradingView 공식 무료 임베드 경제캘린더 위젯 (정식 script, 스크래핑 아님).
+    countryFilter는 소문자 2자리 코드(kr,us 등) — 알아보기 쉬움.
+    importanceFilter: -1(낮음)~1(높음) 범위, '1'은 높음만.
+    locale='kr'로 한국어 표시 시도."""
+    html = f"""
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript"
+        src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
+      {{
+      "colorTheme": "light",
+      "isTransparent": false,
+      "width": "100%",
+      "height": "{height}",
+      "locale": "kr",
+      "importanceFilter": "{importance}",
+      "countryFilter": "{country_codes}"
+      }}
+      </script>
+    </div>
+    """
+    st.components.v1.html(html, height=height + 30, scrolling=True)
+    st.caption("실시간 위젯 제공: TradingView (공식 무료 임베드) · 중요도 '높음'만 · 국가: 한국·미국")
+
+
 
 
 def render_schedule_calendar(policy_events, country_label):
@@ -1601,7 +1609,7 @@ def render_schedule_calendar(policy_events, country_label):
 
 
 def page_economic_calendar():
-    render_investing_calendar_widget(country_codes="5,11", height=650)  # 5=미국, 11=한국 (확인 완료)
+    render_tv_calendar_widget(country_codes="kr,us", height=650)
     st.markdown("[Fed 공식 캘린더](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm) · "
                 "[한국은행 금통위 일정](https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSeCd=01&menuNo=200755) · "
                 "[Investing.com 실적발표 캘린더](https://kr.investing.com/earnings-calendar) · "
